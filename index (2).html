@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#176b45">
+<title>Sundkollen v1.0 – en enda HTML-fil</title>
+<style>
+:root{font-family:system-ui,-apple-system,sans-serif;color:#17231c;background:#f6f8f5}
+body{margin:0} header{background:#176b45;color:white;padding:18px 16px} main{max-width:760px;margin:auto;padding:16px}
+h1{margin:0;font-size:1.7rem}.sub{opacity:.9;margin:.3rem 0 0}
+.card{background:white;border:1px solid #dce5de;border-radius:16px;padding:16px;margin:14px 0;box-shadow:0 2px 10px #0000000b}
+button,input{font:inherit}button{background:#176b45;color:#fff;border:0;border-radius:12px;padding:13px 16px;font-weight:700}
+button.secondary{background:#e7efe9;color:#164b34}input{box-sizing:border-box;width:100%;padding:13px;border:1px solid #aebdb3;border-radius:10px;margin:8px 0}
+.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1;min-width:140px}
+.badge{display:inline-block;border-radius:999px;padding:5px 10px;font-weight:700;margin:2px}
+.green{background:#dff4e6;color:#12572f}.yellow{background:#fff0bd;color:#704f00}.red{background:#ffd9d7;color:#7a1711}.gray{background:#e9ecea;color:#37423b}
+.item{border-top:1px solid #e6ebe7;padding:12px 0}.item:first-child{border-top:0}
+small{color:#5a675f}.warn{background:#fff7df;border-left:5px solid #e4ae19;padding:12px;border-radius:8px}
+#reader{width:100%;overflow:hidden;border-radius:12px}
+a{color:#125c3d}
+
+:focus-visible{outline:4px solid #0b57d0;outline-offset:3px}
+button,input,a{min-height:44px}
+button{min-width:44px}
+input{font-size:1rem}
+.skip{position:absolute;left:-9999px;top:8px;background:white;color:#111;padding:12px;z-index:999}
+.skip:focus{left:8px}
+.status{padding:12px;border-radius:10px;background:#eef3ef}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+@media (prefers-contrast:more){.card{border:2px solid #17231c}.badge{border:1px solid currentColor}}
+@media (max-width:480px){main{padding:12px}.row{display:block}.row button{width:100%;margin:5px 0}h1{font-size:1.55rem}}
+
+.hero-actions{display:grid;gap:12px;margin:18px 0}
+.hero-actions button{width:100%;min-height:58px;font-size:1.08rem}
+.primary-big{font-size:1.2rem!important;min-height:68px!important}
+.hidden{display:none!important}
+.bottomnav{position:sticky;bottom:0;background:#fff;border-top:1px solid #ccd7cf;display:grid;grid-template-columns:repeat(4,1fr);gap:2px;padding:6px;z-index:50}
+.bottomnav button{background:white;color:#174c35;padding:9px 4px;min-width:0;font-size:.86rem}
+.bottomnav button[aria-current="page"]{background:#e1efe6}
+.view-title{margin-top:0}
+@media(min-width:700px){.bottomnav{position:static;border:1px solid #ccd7cf;border-radius:14px;margin-top:14px}}
+
+.photo-preview{max-width:100%;max-height:360px;border-radius:12px;border:1px solid #ccd7cf;margin:10px 0}
+.photo-fields textarea{box-sizing:border-box;width:100%;min-height:88px;padding:12px;border:1px solid #aebdb3;border-radius:10px;font:inherit}
+.photo-fields label{display:block;margin-top:14px}
+
+.ocrbox{white-space:pre-wrap;background:#f7f8f7;border:1px solid #ccd7cf;border-radius:10px;padding:12px;max-height:260px;overflow:auto}
+.ocr-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+
+.source-choice{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.source-choice button{min-height:64px}
+.source-choice button.active{outline:3px solid currentColor}
+.trace-fields{margin-top:14px}
+.trace-fields label{display:block;margin-top:10px}
+.trace-fields input,.trace-fields textarea,.trace-fields select{box-sizing:border-box;width:100%}
+@media(max-width:520px){.source-choice{grid-template-columns:1fr}}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+</head>
+<body>
+<a class="skip" href="#maincontent">Hoppa till huvudinnehåll</a>
+<header><h1>Sundkollen</h1><p class="sub">Streckkod, ingredienser, tillsatser & tydliga varningar</p></header>
+<main id="maincontent" tabindex="-1">
+<section id="homeView" class="view" aria-labelledby="homeTitle">
+<div class="card">
+<h2 id="homeTitle" class="view-title">Vad vill du göra?</h2>
+<p>Kontrollera en matvara snabbt med kameran eller streckkoden.</p>
+<div class="hero-actions">
+<button id="homeScan" class="primary-big" type="button">📷 Skanna vara</button>
+<button id="homeCode" class="secondary" type="button">⌨ Skriv streckkod</button>
+</div>
+</div>
+<div class="card">
+<h2>Enkelt resultat</h2>
+<p>Efter skanningen visas först det viktigaste: särskilda upplysningar, allergener som finns registrerade och om informationen behöver kontrolleras på förpackningen.</p>
+</div>
+</section>
+
+<section id="scanView" class="view hidden" aria-labelledby="scanTitle">
+<div class="card">
+<h2 id="scanTitle" class="view-title">Registrera vara</h2>
+<p><b>Hur har varan kommit till?</b></p>
+<div class="source-choice" role="group" aria-label="Varans typ">
+<button type="button" data-source="bought">🛒 Köpt</button>
+<button type="button" data-source="own">🌱 Egenproducerat</button>
+<button type="button" data-source="made">🍳 Hemlagat / förädlat</button>
+</div>
+<div id="traceFields" class="trace-fields hidden"></div>
+</div>
+<div class="card">
+<h2>Streckkod och produktdata</h2>
+<div id="reader" aria-label="Kameravy för streckkodsskanning"></div>
+<p id="cameraHelp"><small>Rikta kameran mot streckkoden. Du kan alltid skriva numret manuellt.</small></p>
+<div class="row" role="group" aria-label="Kamerakontroller"><button id="scan" type="button">Starta kamera</button><button class="secondary" id="stop" type="button">Stoppa kamera</button></div>
+<hr>
+<label for="barcode"><b>Streckkodsnummer</b></label>
+<input id="barcode" inputmode="numeric" autocomplete="off" aria-describedby="barcodeHelp" placeholder="T.ex. 7310865004703">
+<div id="barcodeHelp"><small>Skriv siffrorna under streckkoden om kameran inte fungerar.</small></div>
+<button id="lookup" type="button">Sök vara</button>
+<p><small>Ingen användarprofil krävs. Produktdata hämtas från Open Food Facts och kan vara ofullständig. Kontrollera alltid aktuell förpackning vid allergi eller annan viktig uppgift.</small></p>
+</div>
+<div class="card">
+<h2>📷 Läs förpackningen</h2>
+<p>Om produktdatabasen saknar uppgifter kan du fotografera eller välja en bild av förpackningens baksida.</p>
+<label for="packagePhoto"><b>Foto av förpackning</b></label>
+<input id="packagePhoto" type="file" accept="image/*" capture="environment" aria-describedby="photoHelp">
+<div id="photoHelp"><small>Försök få med ursprungsmärkning, ingredienslista, kontrollmärke och batch/lot. Bilden stannar i denna webbläsarsession och laddas inte upp av Sundkollen v0.7.</small></div>
+<img id="photoPreview" class="photo-preview hidden" alt="Förhandsvisning av vald förpackningsbild">
+<div id="ocrPanel" class="hidden">
+<h3>Automatisk textläsning</h3>
+<button id="runOcr" type="button">🔎 Läs text från bilden</button>
+<p id="ocrStatus" role="status" aria-live="polite"><small>Textläsningen sker lokalt i webbläsaren. Första gången kan språkmodellen behöva hämtas från internet.</small></p>
+<div id="ocrResultWrap" class="hidden">
+<label for="ocrText"><b>Text som Sundkollen läste</b></label>
+<textarea id="ocrText" style="width:100%;min-height:180px" aria-describedby="ocrVerify"></textarea>
+<p id="ocrVerify" class="warn"><b>Kontrollera texten mot förpackningen.</b> OCR kan läsa fel, särskilt liten, böjd eller glansig text.</p>
+<div class="ocr-actions"><button id="useOcr" type="button">Bekräfta och analysera text</button><button id="clearOcr" class="secondary" type="button">Rensa</button></div>
+</div>
+</div>
+<div id="photoFields" class="photo-fields hidden">
+<h3>Uppgifter från förpackningen</h3>
+<p class="warn"><b>Kontrollera texten själv.</b> Den här versionen hjälper dig att samla uppgifterna men gör ännu ingen automatisk OCR-tolkning.</p>
+<label for="originNote"><b>Ursprung / tillverkningsplats</b></label>
+<textarea id="originNote" placeholder="Skriv av det som står på förpackningen"></textarea>
+<label for="ingredientNote"><b>Ingredienser / allergener</b></label>
+<textarea id="ingredientNote" placeholder="Skriv av relevant text"></textarea>
+<label for="plantNote"><b>Kontroll-/identifieringsmärke</b></label>
+<input id="plantNote" placeholder="T.ex. SE 1234 EG">
+<label for="batchNote"><b>Batch / lot</b></label>
+<input id="batchNote" placeholder="T.ex. L12345">
+<button id="savePackageNotes" type="button">Spara uppgifterna på enheten</button>
+</div>
+</div>
+<div id="appStatus" class="status" role="status" aria-live="polite">Redo att skanna eller söka.</div>
+<div id="result" aria-live="polite" aria-busy="false"></div>
+</section>
+
+<section id="historyView" class="view hidden" aria-labelledby="historyTitle">
+<div class="card">
+<h2 id="historyTitle" class="view-title">Historik</h2>
+<p>De senaste varorna sparas bara på den här enheten.</p>
+<div id="historyList"><p>Ingen historik ännu.</p></div><h3>Min spårbarhet</h3><div id="traceHistory"><p>Inga egna spårbarhetsposter ännu.</p></div>
+<button id="clearHistory" class="secondary" type="button">Rensa historik</button>
+</div>
+</section>
+
+<section id="settingsView" class="view hidden" aria-labelledby="settingsTitle">
+<div class="card">
+<h2 id="settingsTitle" class="view-title">Inställningar</h2>
+<p><small><b>Enfilsversion:</b> hela Sundkollen ligger i denna index.html. Externa bibliotek och produktdata hämtas från internet när funktionerna används.</small></p>
+<label><input id="largeText" type="checkbox" style="width:auto;min-height:auto"> Större text</label>
+<p><small>Inställningen sparas på den här enheten.</small></p>
+</div>
+<div class="card">
+<h2>Om bedömningen & regler</h2>
+<p><b>Sundkollen är ett informationsverktyg.</b> E-nummer är inte en farosymbol. Särskilda upplysningar ska bygga på spårbara myndighetskällor.</p>
+<ul>
+<li><b>Information</b> – fakta om ämnet eller produkten.</li>
+<li><b>Observera</b> – relevant villkor eller information.</li>
+<li><b>Särskild upplysning</b> – dokumenterad uppgift viktig för viss grupp eller situation.</li>
+<li><b>Kontrollera förpackningen</b> – databasen räcker inte för en säker slutsats.</li>
+</ul>
+<p>Appen är utformad med WCAG 2.2 AA som mål och information ska aldrig förmedlas enbart med färg.</p><h3>Förpackningsfoto och integritet</h3>
+<p>I v0.8 kan textigenkänning köras lokalt i webbläsaren med Tesseract.js. Själva förpackningsbilden skickas inte av Sundkollen till en extern OCR-tjänst. OCR-komponenten och språkdata kan behöva hämtas från internet. Bekräftade/avskrivna uppgifter kan sparas lokalt på enheten.</p>
+<p>Automatisk textigenkänning visar alltid den lästa texten för användaren. Användaren måste kontrollera och bekräfta den innan Sundkollen för över förslag till ursprung, ingredienser, kontrollmärke eller batch/lot.</p>
+<h3>Köpt, egenproducerat och hemlagat</h3>
+<p>Spårbarheten kan registrera både inköpta produkter, egen produktion och hemlagade/förädlade produkter. För blandade produkter kan råvarorna anges var för sig som egna eller köpta. Uppgifterna sparas lokalt på enheten.</p>
+<h3>Ursprung och spårbarhet</h3>
+<p>Sundkollen skiljer mellan produktens registrerade land, angivet råvaruursprung och tillverknings-/förpackningsplats. Streckkodens GS1-prefix används aldrig som bevis för ursprungsland.</p>
+<p>När ursprungsdata är ofullständiga visas <b>Kontrollera förpackningen</b> i stället för en gissning.</p>
+</div>
+</section>
+
+<nav class="bottomnav" aria-label="Huvudmeny">
+<button data-view="homeView" aria-current="page">Hem</button>
+<button data-view="scanView">Skanna</button>
+<button data-view="historyView">Historik</button>
+<button data-view="settingsView">Inställningar</button>
+</nav>
+</main>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+const $=s=>document.querySelector(s);
+let scanner=null;
+
+// Startuppsättning för särskilda upplysningar. Detta är medvetet försiktigt och ska utökas från myndighetskällor.
+const alerts={
+  "en:e951":{level:"red",title:"Aspartam (E951)",kind:"Särskild upplysning",text:"Innehåller en fenylalaninkälla. Personer med fenylketonuri (PKU) måste undvika/begränsa fenylalanin.",source:"Livsmedelsverket / EU 1169/2011",url:"https://www.livsmedelsverket.se/livsmedel-och-innehall/tillsatser-e-nummer/sotningsmedel/aspartam"},
+  "en:e962":{level:"red",title:"Salt av aspartam och acesulfam (E962)",kind:"Särskild upplysning",text:"Innehåller en fenylalaninkälla och omfattas av särskild märkningsinformation.",source:"Livsmedelsverket / EU 1169/2011",url:"https://www.livsmedelsverket.se/livsmedel-och-innehall/tillsatser-e-nummer/sok-e-nummer/e-962---salt-av-aspartam-och-acesulfam"},
+  "en:e102":{level:"yellow",title:"Tartrazin (E102)",kind:"Märkningsinformation",text:"Tillhör färgämnen som i vissa livsmedel omfattas av särskild EU-upplysning om möjlig negativ effekt på barns aktivitet och uppmärksamhet.",source:"EU:s livsmedelsregler",url:"https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32008R1333"},
+  "en:e104":{level:"yellow",title:"Kinolingult (E104)",kind:"Märkningsinformation",text:"Tillhör färgämnen som i vissa livsmedel omfattas av särskild EU-upplysning om möjlig negativ effekt på barns aktivitet och uppmärksamhet.",source:"EU:s livsmedelsregler",url:"https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32008R1333"},
+  "en:e110":{level:"yellow",title:"Para-orange (E110)",kind:"Märkningsinformation",text:"Tillhör färgämnen som i vissa livsmedel omfattas av särskild EU-upplysning om möjlig negativ effekt på barns aktivitet och uppmärksamhet.",source:"EU:s livsmedelsregler",url:"https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32008R1333"},
+  "en:e122":{level:"yellow",title:"Azorubin/karmoisin (E122)",kind:"Märkningsinformation",text:"Tillhör färgämnen som i vissa livsmedel omfattas av särskild EU-upplysning om möjlig negativ effekt på barns aktivitet och uppmärksamhet.",source:"EU:s livsmedelsregler",url:"https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32008R1333"},
+  "en:e124":{level:"yellow",title:"Nykockin (E124)",kind:"Märkningsinformation",text:"Tillhör färgämnen som i vissa livsmedel omfattas av särskild EU-upplysning om möjlig negativ effekt på barns aktivitet och uppmärksamhet.",source:"EU:s livsmedelsregler",url:"https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32008R1333"},
+  "en:e129":{level:"yellow",title:"Allurarött AC (E129)",kind:"Märkningsinformation",text:"Tillhör färgämnen som i vissa livsmedel omfattas av särskild EU-upplysning om möjlig negativ effekt på barns aktivitet och uppmärksamhet.",source:"EU:s livsmedelsregler",url:"https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32008R1333"}
+};
+
+function esc(x){return String(x??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
+function additiveLabel(tag){return tag.replace(/^..:/,"").toUpperCase().replace("E","E ")}
+async function lookup(code){
+  code=(code||"").trim(); if(!code){$("#appStatus").textContent="Skriv eller skanna en streckkod först."; $("#barcode").focus(); return;}
+  $("#result").setAttribute("aria-busy","true"); $("#appStatus").textContent="Söker efter produkten…"; $("#result").innerHTML='<div class="card"><p>Söker…</p></div>';
+  try{
+    const u=`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=code,product_name,brands,image_front_small_url,ingredients_text,additives_tags,allergens_tags,nutriscore_grade,nova_group,nutriments,countries_tags,origins,origins_tags,manufacturing_places,manufacturing_places_tags,emb_codes,packaging_text,producer,producer_version_id`;
+    const r=await fetch(u); const d=await r.json();
+    if(!d.product){$("#result").setAttribute("aria-busy","false"); $("#appStatus").textContent="Produkten hittades inte."; $("#result").innerHTML='<div class="card"><h2>Produkten hittades inte</h2><p>Kontrollera streckkoden. Senare kan vi lägga till fotografering av ingredienslistan.</p></div>';return}
+    const p=d.product, adds=p.additives_tags||[], alg=p.allergens_tags||[];
+    const ing=(p.ingredients_text||"").toLowerCase();
+    const polyols=["en:e420","en:e421","en:e953","en:e965","en:e966","en:e967","en:e968"];
+    const hasPolyol=adds.some(a=>polyols.includes(a));
+    const warnings=adds.map(a=>alerts[a]).filter(Boolean);
+    let html=`<div class="card"><h2 id="productHeading" tabindex="-1">${esc(p.product_name||"Okänd produkt")}</h2><p>${esc(p.brands||"")}</p>`;
+    if(p.image_front_small_url) html+=`<img src="${esc(p.image_front_small_url)}" alt="" style="max-width:160px;border-radius:12px">`;
+    html+=`<p><span class="badge gray">Nutri-Score ${(p.nutriscore_grade||"?").toUpperCase()}</span> <span class="badge gray">NOVA ${p.nova_group||"?"}</span></p></div>`;
+    html+=`<div class="card"><h2>Varningar & upplysningar</h2>`;
+    if(!warnings.length) html+=`<p><span class="badge green">Ingen särskild träff</span></p><p>Det betyder inte att produkten är riskfri; bara att ingen av prototypens särskilda tillsatsvarningar matchade.</p>`;
+    warnings.forEach(w=>html+=`<div class="item"><span class="badge ${w.level}">${w.level==="red"?"Särskild upplysning":"Observera"}</span><b> ${esc(w.title)}</b><p>${esc(w.text)}</p><small>${esc(w.kind)} · <a href="${esc(w.url)}" target="_blank" rel="noopener">${esc(w.source)}</a></small></div>`);
+    if(hasPolyol) html+=`<div class="item"><span class="badge yellow">Polyoler</span><b> Sötningsmedel/sockeralkoholer</b><p>Om produkten innehåller mer än 10 % tillsatta polyoler kräver EU-regler upplysningen att överdriven konsumtion kan ha laxerande effekt. Produktdatabasen anger inte alltid mängden, så detta visas som information – inte som bevis att 10 %-gränsen är passerad.</p><small>Källa: EU 1169/2011, bilaga III</small></div>`;
+    if(alg.length) html+=`<div class="item"><b>Allergener registrerade:</b> ${alg.map(x=>esc(x.replace(/^..:/,""))).join(", ")}</div>`;
+    html+=`</div><div class="card"><h2>🌍 Var kommer varan ifrån?</h2>`;
+    const originText=p.origins||"";
+    const countries=(p.countries_tags||[]).map(x=>x.replace(/^..:/,"").replaceAll("-"," "));
+    const places=p.manufacturing_places||"";
+    const emb=(p.emb_codes||"");
+    if(originText) html+=`<div class="item"><b>Angivet ursprung:</b> ${esc(originText)}<br><span class="badge yellow">Produktdata – kontrollera förpackningen</span></div>`;
+    else html+=`<div class="item"><b>Råvaruursprung:</b> Okänt<br><span class="badge gray">Kontrollera förpackningen</span></div>`;
+    if(places) html+=`<div class="item"><b>Tillverknings-/förpackningsplats:</b> ${esc(places)}<br><span class="badge yellow">Produktdata</span></div>`;
+    if(emb) html+=`<div class="item"><b>Anläggnings-/kontrollkod:</b> ${esc(emb)}<br><span class="badge yellow">Kan ge ytterligare spårbarhet</span></div>`;
+    if(countries.length) html+=`<div class="item"><b>Länder registrerade för produkten:</b> ${esc(countries.join(", "))}<br><small>Detta är inte automatiskt samma sak som råvarans ursprungsland.</small></div>`;
+    html+=`<div class="warn"><b>Viktigt om streckkoden:</b> GS1-prefixet identifierar inte produktens ursprungsland. Sundkollen använder därför aldrig de första streckkodssiffrorna som bevis för var varan tillverkats.</div>`;
+    html+=`<div class="item"><b>Mer spårning</b><p>Om uppgifterna saknas kan du kontrollera förpackningens text, kontroll-/identifieringsmärke, QR-kod och parti-/batchnummer. En kommande version kan läsa dessa från ett foto.</p></div>`;
+    html+=`</div><div class="card"><h2>Tillsatser</h2>`;
+    html+=adds.length?adds.map(a=>`<span class="badge ${alerts[a]?.level||"green"}">${esc(additiveLabel(a))}</span>`).join(" "):"<p>Inga tillsatser registrerade i databasen.</p>";
+    html+=`</div><div class="card"><h2>Ingredienser</h2><p>${esc(p.ingredients_text||"Ingredienslista saknas i databasen.")}</p></div>`;
+    saveHistoryItem(p,code); $("#result").innerHTML=html; $("#result").setAttribute("aria-busy","false"); $("#appStatus").textContent="Produkten är hämtad. Resultatet visas nedan."; setTimeout(()=>$("#productHeading")?.focus(),0);
+  }catch(e){$("#result").setAttribute("aria-busy","false"); $("#appStatus").textContent="Ett fel inträffade."; $("#result").innerHTML='<div class="card"><h2>Kunde inte hämta data</h2><p>Kontrollera internetanslutningen och försök igen.</p></div>'}
+}
+$("#lookup").onclick=()=>lookup($("#barcode").value);
+$("#barcode").addEventListener("keydown",e=>{if(e.key==="Enter")lookup(e.target.value)});
+$("#scan").onclick=async()=>{
+  if(scanner)return;
+  scanner=new Html5Qrcode("reader");
+  try{
+    await scanner.start({facingMode:"environment"},{fps:10,qrbox:{width:280,height:140}},
+      code=>{ $("#barcode").value=code; lookup(code); $("#stop").click(); });
+  }catch(e){alert("Kameran kunde inte startas. Ge webbplatsen kamerabehörighet eller skriv streckkoden manuellt."); scanner=null}
+};
+$("#stop").onclick=async()=>{if(scanner){try{await scanner.stop()}catch(e){} scanner.clear(); scanner=null}}
+
+
+let packageImageUrl=null;
+
+let sourceType=localStorage.getItem("sundkollen-source-type")||"bought";
+function traceTemplate(type){
+ if(type==="bought") return `<h3>Inköpsuppgifter</h3>
+ <label for="purchasePlace"><b>Inköpsställe</b></label><input id="purchasePlace" placeholder="Butik, gårdsbutik, REKO, marknad…">
+ <label for="purchaseDate"><b>Inköpsdatum</b></label><input id="purchaseDate" type="date">
+ <label for="purchaseOrigin"><b>Ursprung enligt förpackningen</b></label><input id="purchaseOrigin" placeholder="T.ex. Sverige">
+ <button id="saveTrace" type="button">Spara spårbarhet</button>`;
+ if(type==="own") return `<h3>Egen produktion</h3>
+ <label for="ownProduct"><b>Produkt/råvara</b></label><input id="ownProduct" placeholder="T.ex. potatis">
+ <label for="ownPlace"><b>Odlings-/produktionsplats</b></label><input id="ownPlace" placeholder="T.ex. Sunne">
+ <label for="ownDate"><b>Skörde-/produktionsdatum</b></label><input id="ownDate" type="date">
+ <label for="ownNote"><b>Anteckning</b></label><textarea id="ownNote" placeholder="Sort, odlingssätt, foder eller annat du vill komma ihåg"></textarea>
+ <button id="saveTrace" type="button">Spara spårbarhet</button>`;
+ return `<h3>Hemlagat / förädlat</h3>
+ <label for="madeProduct"><b>Vad har du gjort?</b></label><input id="madeProduct" placeholder="T.ex. jordgubbssylt">
+ <label for="madeDate"><b>Tillverkningsdatum</b></label><input id="madeDate" type="date">
+ <label for="madeIngredients"><b>Råvaror och ursprung</b></label>
+ <textarea id="madeIngredients" placeholder="Exempel:\nJordgubbar – egna – Sunne\nSocker – köpt – ursprung enligt förpackning"></textarea>
+ <label for="madeBatch"><b>Eget batch-/lotnummer (valfritt)</b></label><input id="madeBatch" placeholder="T.ex. SYLT-2026-10-04-01">
+ <button id="saveTrace" type="button">Spara spårbarhet</button>`;
+}
+function setSource(type){
+ sourceType=type; localStorage.setItem("sundkollen-source-type",type);
+ document.querySelectorAll(".source-choice button").forEach(b=>b.classList.toggle("active",b.dataset.source===type));
+ const el=$("#traceFields"); el.innerHTML=traceTemplate(type); el.classList.remove("hidden");
+ $("#saveTrace").onclick=saveTrace;
+}
+function saveTrace(){
+ const data={type:sourceType,saved:new Date().toISOString()};
+ $("#traceFields").querySelectorAll("input,textarea").forEach(el=>data[el.id]=el.value.trim());
+ let arr=[]; try{arr=JSON.parse(localStorage.getItem("sundkollen-trace")||"[]")}catch(e){}
+ arr.unshift(data); arr=arr.slice(0,100); localStorage.setItem("sundkollen-trace",JSON.stringify(arr));
+ $("#appStatus").textContent="Spårbarhetsuppgifterna har sparats lokalt på den här enheten.";
+ renderTraceHistory();
+}
+document.querySelectorAll(".source-choice button").forEach(b=>b.onclick=()=>setSource(b.dataset.source));
+setTimeout(()=>setSource(sourceType),0);
+
+function renderTraceHistory(){
+ const host=$("#traceHistory"); if(!host)return;
+ let arr=[]; try{arr=JSON.parse(localStorage.getItem("sundkollen-trace")||"[]")}catch(e){}
+ if(!arr.length){host.innerHTML="<p>Inga egna spårbarhetsposter ännu.</p>";return}
+ const labels={bought:"🛒 Köpt",own:"🌱 Egenproducerat",made:"🍳 Hemlagat/förädlat"};
+ host.innerHTML=arr.slice(0,20).map(x=>{
+   const vals=Object.entries(x).filter(([k,v])=>!["type","saved"].includes(k)&&v).map(([k,v])=>esc(v)).join(" · ");
+   return `<div class="item"><b>${labels[x.type]||esc(x.type)}</b><br>${vals}</div>`;
+ }).join("");
+}
+
+
+let ocrConfirmed=false;
+function pickLine(text, patterns){
+ const lines=text.split(/\n/).map(x=>x.trim()).filter(Boolean);
+ for(const pat of patterns){const hit=lines.find(l=>pat.test(l)); if(hit)return hit}
+ return "";
+}
+$("#runOcr").onclick=async()=>{
+ const f=$("#packagePhoto").files?.[0]; if(!f){$("#ocrStatus").textContent="Välj först ett foto.";return}
+ if(!window.Tesseract){$("#ocrStatus").textContent="OCR-modulen kunde inte laddas. Kontrollera internetanslutningen.";return}
+ $("#runOcr").disabled=true; $("#ocrStatus").textContent="Läser text från bilden…";
+ try{
+   const res=await Tesseract.recognize(f,"swe+eng",{logger:m=>{
+     if(m.status==="recognizing text" && typeof m.progress==="number")
+       $("#ocrStatus").textContent="Läser text… "+Math.round(m.progress*100)+" %";
+   }});
+   $("#ocrText").value=res.data.text||"";
+   $("#ocrResultWrap").classList.remove("hidden");
+   $("#ocrStatus").textContent="Textläsningen är klar. Kontrollera resultatet mot förpackningen.";
+   ocrConfirmed=false;
+ }catch(e){
+   $("#ocrStatus").textContent="Textläsningen misslyckades. Du kan fortfarande skriva av uppgifterna manuellt.";
+ }finally{$("#runOcr").disabled=false}
+};
+$("#clearOcr").onclick=()=>{$("#ocrText").value="";$("#ocrResultWrap").classList.add("hidden");ocrConfirmed=false};
+$("#useOcr").onclick=()=>{
+ const t=$("#ocrText").value.trim();
+ if(!t){$("#ocrStatus").textContent="Det finns ingen text att analysera.";return}
+ const origin=pickLine(t,[/ursprung/i,/origin/i,/tillverkad i/i,/producerad i/i,/made in/i]);
+ const ingredients=pickLine(t,[/ingredienser/i,/ingredients/i]);
+ const plant=pickLine(t,[/\b(?:SE|DK|FI|DE|NL|FR|IT|ES|PL)\s*[\w.-]{2,}\s*(?:EG|EC|EU)?\b/i]);
+ const batch=pickLine(t,[/\b(?:lot|batch|parti|l[\s:.-]?\d)/i]);
+ if(origin && !$("#originNote").value) $("#originNote").value=origin;
+ if(ingredients && !$("#ingredientNote").value) $("#ingredientNote").value=ingredients;
+ if(plant && !$("#plantNote").value) $("#plantNote").value=plant;
+ if(batch && !$("#batchNote").value) $("#batchNote").value=batch;
+ ocrConfirmed=true;
+ $("#ocrStatus").textContent="OCR-texten är bekräftad. Kontrollera de föreslagna fälten och ändra vid behov innan du sparar.";
+ $("#originNote").focus();
+};
+
+$("#packagePhoto").addEventListener("change",e=>{
+ const f=e.target.files?.[0]; if(!f)return;
+ if(packageImageUrl) URL.revokeObjectURL(packageImageUrl);
+ packageImageUrl=URL.createObjectURL(f);
+ const img=$("#photoPreview"); img.src=packageImageUrl; img.classList.remove("hidden");
+ $("#ocrPanel").classList.remove("hidden"); $("#photoFields").classList.remove("hidden");
+ $("#appStatus").textContent="Förpackningsbild vald. Kontrollera och skriv av relevanta uppgifter.";
+});
+$("#savePackageNotes").onclick=()=>{
+ const code=$("#barcode").value.trim()||"utan-streckkod";
+ const rec={
+   code,
+   origin:$("#originNote").value.trim(),
+   ingredients:$("#ingredientNote").value.trim(),
+   plant:$("#plantNote").value.trim(),
+   batch:$("#batchNote").value.trim(),
+   saved:new Date().toISOString()
+ };
+ localStorage.setItem("sundkollen-package-"+code,JSON.stringify(rec));
+ $("#appStatus").textContent="Förpackningsuppgifterna har sparats lokalt på den här enheten.";
+};
+
+function showView(id){
+  document.querySelectorAll(".view").forEach(v=>v.classList.toggle("hidden",v.id!==id));
+  document.querySelectorAll(".bottomnav button").forEach(b=>{
+    if(b.dataset.view===id)b.setAttribute("aria-current","page"); else b.removeAttribute("aria-current");
+  });
+  const h=document.querySelector("#"+id+" h2"); if(h){h.setAttribute("tabindex","-1");h.focus();}
+  if(id==="historyView"){renderHistory();renderTraceHistory();}
+}
+document.querySelectorAll(".bottomnav button").forEach(b=>b.onclick=()=>showView(b.dataset.view));
+$("#homeScan").onclick=()=>{showView("scanView");setTimeout(()=>$("#scan").click(),100)};
+$("#homeCode").onclick=()=>{showView("scanView");setTimeout(()=>$("#barcode").focus(),100)};
+
+function getHistory(){try{return JSON.parse(localStorage.getItem("sundkollen-history")||"[]")}catch(e){return[]}}
+function saveHistoryItem(p,code){
+ let h=getHistory().filter(x=>x.code!==code);
+ h.unshift({code:code,name:p.product_name||"Okänd produkt",brand:p.brands||"",time:new Date().toISOString()});
+ h=h.slice(0,20); localStorage.setItem("sundkollen-history",JSON.stringify(h));
+}
+function renderHistory(){
+ const h=getHistory(), el=$("#historyList");
+ if(!h.length){el.innerHTML="<p>Ingen historik ännu.</p>";return}
+ el.innerHTML=h.map(x=>`<div class="item"><button class="secondary hist" data-code="${esc(x.code)}" type="button" style="width:100%;text-align:left">${esc(x.name)}${x.brand?" – "+esc(x.brand):""}<br><small>Streckkod ${esc(x.code)}</small></button></div>`).join("");
+ el.querySelectorAll(".hist").forEach(b=>b.onclick=()=>{showView("scanView");$("#barcode").value=b.dataset.code;lookup(b.dataset.code)});
+}
+$("#clearHistory").onclick=()=>{localStorage.removeItem("sundkollen-history");renderHistory();$("#appStatus").textContent="Historiken har rensats."};
+
+const large=$("#largeText");
+large.checked=localStorage.getItem("sundkollen-large-text")==="1";
+function applyLarge(){document.documentElement.style.fontSize=large.checked?"120%":""}
+large.onchange=()=>{localStorage.setItem("sundkollen-large-text",large.checked?"1":"0");applyLarge()}
+applyLarge();
+
+/* Single-file edition: no separate service worker or manifest is required.
+   Camera, Open Food Facts and OCR still require network/HTTPS where applicable. */
+</script>
+</body></html>
