@@ -80,16 +80,16 @@ input{font-size:1rem}
 <div class="card">
 <h2 id="scanTitle" class="view-title">Skanna eller sök vara</h2>
 <p><b>Du behöver inte fylla i några uppgifter först.</b> Skanna streckkoden, välj en bild eller skriv numret manuellt.</p>
-<h2>Streckkod och produktdata</h2>
+<h2>Streckkod / QR-kod och produktdata</h2>
 <div id="reader" aria-label="Kameravy för streckkodsskanning"></div>
-<p id="cameraHelp"><small>Rikta kameran mot streckkoden och håll den stilla. Sundkollen provar automatiskt flera kamerametoder för mobil, surfplatta och dator. Du kan alltid välja en bild eller skriva numret manuellt.</small></p>
+<p id="cameraHelp"><small>Rikta kameran mot en streckkod eller QR-kod och håll den stilla. Sundkollen avgör automatiskt vilken typ av kod det är. Du kan alltid välja en bild eller skriva streckkodsnumret manuellt.</small></p>
 <div class="row" role="group" aria-label="Kamerakontroller"><button id="scan" type="button">Starta kamera</button><button class="secondary" id="stop" type="button">Stoppa kamera</button></div>
 <div id="cameraStatus" class="status" role="status" aria-live="polite" style="margin-top:10px">Kameran är inte startad.</div>
 <div id="cameraChoiceWrap" class="hidden" style="margin-top:10px">
 <label for="cameraSelect"><b>Välj kamera</b></label>
 <select id="cameraSelect" style="box-sizing:border-box;width:100%;padding:13px;border:1px solid #aebdb3;border-radius:10px;margin:8px 0"></select>
 </div>
-<label for="barcodeImage" style="display:block;margin-top:12px"><b>Alternativ: välj en bild av streckkoden</b></label>
+<label for="barcodeImage" style="display:block;margin-top:12px"><b>Alternativ: välj en bild av streckkoden eller QR-koden</b></label>
 <input id="barcodeImage" type="file" accept="image/*" aria-describedby="barcodeImageHelp">
 <div id="barcodeImageHelp"><small>Fungerar även om webbläsaren inte ger direkt åtkomst till kameran.</small></div>
 <hr>
@@ -643,13 +643,152 @@ async function stopCamera(clearStatus=false){
   if(clearStatus)setCameraStatus("Kameran är stoppad.");
 }
 
-async function handleScannedCode(raw){
-  const code=String(raw||"").trim();
-  if(!code)return;
-  $("#barcode").value=code;
-  setCameraStatus("Streckkoden hittades. Hämtar produktdata…");
+function safeDecode(x){
+  try{return decodeURIComponent(String(x||""))}catch(e){return String(x||"")}
+}
+function looksLikeProductCode(x){
+  return /^\d{8,14}$/.test(String(x||"").trim());
+}
+function parseGs1Data(raw){
+  const out={gtin:"",lot:"",expiry:"",production:"",bestBefore:"",serial:"",gln:"",originCountryCode:"",url:""};
+  const text=String(raw||"").trim();
+
+  // GS1 Application Identifiers written as (01)...(10)... etc.
+  const re=/\((01|10|11|15|17|21|414|422)\)([^()]+)/g;
+  let m;
+  while((m=re.exec(text))){
+    const ai=m[1], value=m[2].trim();
+    if(ai==="01")out.gtin=value;
+    else if(ai==="10")out.lot=value;
+    else if(ai==="11")out.production=value;
+    else if(ai==="15")out.bestBefore=value;
+    else if(ai==="17")out.expiry=value;
+    else if(ai==="21")out.serial=value;
+    else if(ai==="414")out.gln=value;
+    else if(ai==="422")out.originCountryCode=value;
+  }
+
+  // GS1 Digital Link: .../01/GTIN/10/LOT/17/YYMMDD/21/SERIAL
+  try{
+    const u=new URL(text);
+    if(u.protocol==="http:"||u.protocol==="https:"){
+      out.url=u.href;
+      const parts=u.pathname.split("/").filter(Boolean).map(safeDecode);
+      for(let i=0;i<parts.length-1;i++){
+        const ai=parts[i], value=parts[i+1];
+        if(ai==="01"){out.gtin=value;i++}
+        else if(ai==="10"){out.lot=value;i++}
+        else if(ai==="11"){out.production=value;i++}
+        else if(ai==="15"){out.bestBefore=value;i++}
+        else if(ai==="17"){out.expiry=value;i++}
+        else if(ai==="21"){out.serial=value;i++}
+        else if(ai==="414"){out.gln=value;i++}
+        else if(ai==="422"){out.originCountryCode=value;i++}
+      }
+      const qp=[
+        ["01","gtin"],["gtin","gtin"],["10","lot"],["lot","lot"],
+        ["11","production"],["15","bestBefore"],["17","expiry"],
+        ["21","serial"],["serial","serial"],["414","gln"],["422","originCountryCode"]
+      ];
+      for(const [key,field] of qp){
+        if(!out[field]&&u.searchParams.get(key))out[field]=u.searchParams.get(key);
+      }
+    }
+  }catch(e){}
+  return out;
+}
+function hasGs1Data(g){
+  return !!(g.gtin||g.lot||g.expiry||g.production||g.bestBefore||g.serial||g.gln||g.originCountryCode);
+}
+function gs1DateText(v){
+  const x=String(v||"");
+  if(/^\d{6}$/.test(x))return x.slice(0,2)+"-"+x.slice(2,4)+"-"+x.slice(4,6)+" (ÅÅ-MM-DD)";
+  return x;
+}
+function renderGs1Card(g){
+  let html='<div class="card"><h2>QR / GS1-spårbarhet</h2>';
+  html+='<p><span class="badge green">GS1-data identifierad</span></p>';
+  if(g.gtin)html+='<div class="item"><b>Produktnummer (GTIN):</b> '+esc(g.gtin)+'</div>';
+  if(g.lot)html+='<div class="item"><b>Batch / lot:</b> '+esc(g.lot)+'</div>';
+  if(g.production)html+='<div class="item"><b>Produktionsdatum:</b> '+esc(gs1DateText(g.production))+'</div>';
+  if(g.bestBefore)html+='<div class="item"><b>Bäst före:</b> '+esc(gs1DateText(g.bestBefore))+'</div>';
+  if(g.expiry)html+='<div class="item"><b>Sista förbruknings-/utgångsdatum:</b> '+esc(gs1DateText(g.expiry))+'</div>';
+  if(g.serial)html+='<div class="item"><b>Serienummer:</b> '+esc(g.serial)+'</div>';
+  if(g.gln)html+='<div class="item"><b>Plats-/företagsnummer (GLN):</b> '+esc(g.gln)+'</div>';
+  if(g.originCountryCode)html+='<div class="item"><b>GS1-landkod för ursprung (AI 422):</b> '+esc(g.originCountryCode)+'<br><small>Detta är en numerisk ISO-landkod. Sundkollen gissar inte land om koden inte kan översättas säkert.</small></div>';
+  if(g.url)html+='<p><a href="'+esc(g.url)+'" target="_blank" rel="noopener noreferrer">Öppna GS1-länken</a></p>';
+  html+='<p><small>QR/GS1-informationen kommer från själva koden. Kontrollera viktig information mot etiketten.</small></p></div>';
+  return html;
+}
+function renderQrUrl(raw){
+  const url=String(raw||"").trim();
+  $("#result").innerHTML='<div class="card"><h2>QR-kod med webblänk</h2>'+
+    '<p>Sundkollen hittade en webbadress i QR-koden.</p>'+
+    '<p><a href="'+esc(url)+'" target="_blank" rel="noopener noreferrer">Öppna länken</a></p>'+
+    '<div class="item"><b>Adress:</b><br><small>'+esc(url)+'</small></div>'+
+    '<p class="warn"><b>Kontrollera avsändaren.</b> Sundkollen öppnar aldrig QR-länkar automatiskt.</p></div>';
+  $("#result").setAttribute("aria-busy","false");
+  setCameraStatus("QR-koden innehåller en webblänk.");
+}
+function renderQrText(raw){
+  $("#result").innerHTML='<div class="card"><h2>QR-kod med text/data</h2>'+
+    '<p>QR-koden innehåller information som inte är en vanlig produktkod eller webblänk.</p>'+
+    '<div class="ocrbox">'+esc(raw)+'</div>'+
+    '<p><small>Sundkollen visar innehållet utan att gissa vad uppgifterna betyder.</small></p></div>';
+  $("#result").setAttribute("aria-busy","false");
+  setCameraStatus("QR-kodens innehåll visas nedan.");
+}
+async function handleScannedCode(raw,format=""){
+  const value=String(raw||"").trim();
+  if(!value)return;
   await stopCamera(false);
-  lookup(code);
+
+  const fmt=String(format||"").toLowerCase();
+  const gs1=parseGs1Data(value);
+
+  // Vanlig EAN/UPC/GTIN eller QR som bara innehåller produktnumret.
+  if(looksLikeProductCode(value) && !hasGs1Data(gs1)){
+    $("#barcode").value=value;
+    setCameraStatus("Produktkoden hittades. Hämtar produktdata…");
+    await lookup(value);
+    return;
+  }
+
+  // GS1 Digital Link eller QR med GS1 Application Identifiers.
+  if(hasGs1Data(gs1)){
+    if(gs1.gtin){
+      $("#barcode").value=gs1.gtin;
+      setCameraStatus("GS1 QR-kod hittad. Hämtar produkten och spårbarhetsdata…");
+      await lookup(gs1.gtin);
+      const host=$("#result");
+      if(host)host.insertAdjacentHTML("afterbegin",renderGs1Card(gs1));
+    }else{
+      $("#result").innerHTML=renderGs1Card(gs1);
+      $("#result").setAttribute("aria-busy","false");
+      setCameraStatus("GS1-spårbarhetsdata hittades i QR-koden.");
+    }
+    return;
+  }
+
+  // Vanlig QR-länk.
+  try{
+    const u=new URL(value);
+    if(u.protocol==="http:"||u.protocol==="https:"){
+      renderQrUrl(u.href);
+      return;
+    }
+  }catch(e){}
+
+  // Om läsaren uttryckligen säger QR, eller innehållet inte är en normal produktkod:
+  // visa datan i stället för att göra ett felaktigt produktuppslag.
+  if(fmt.includes("qr") || !looksLikeProductCode(value)){
+    renderQrText(value);
+    return;
+  }
+
+  $("#barcode").value=value;
+  setCameraStatus("Koden hittades. Hämtar produktdata…");
+  await lookup(value);
 }
 
 async function cameraPermissionState(){
@@ -756,7 +895,9 @@ async function startZXingOnStream(video){
     result=>{
       if(result){
         const value=typeof result.getText==="function" ? result.getText() : (result.text||"");
-        handleScannedCode(value);
+        let format="";
+        try{format=String(typeof result.getBarcodeFormat==="function" ? result.getBarcodeFormat() : (result.barcodeFormat||""))}catch(e){}
+        handleScannedCode(value,format);
       }
     }
   );
@@ -776,7 +917,7 @@ async function startNativeOnStream(video){
       if(video.readyState>=2){
         const codes=await detector.detect(video);
         if(codes?.length){
-          await handleScannedCode(codes[0].rawValue);
+          await handleScannedCode(codes[0].rawValue,codes[0].format||"");
           return;
         }
       }
@@ -850,12 +991,11 @@ $("#barcodeImage").addEventListener("change",async e=>{
     const code=await imageScanner.scanFile(file,true);
     try{imageScanner.clear()}catch(_){}
     $("#reader").innerHTML="";
-    $("#barcode").value=code;
-    $("#appStatus").textContent="Streckkoden lästes från bilden.";
-    lookup(code);
+    setCameraStatus("Koden lästes från bilden. Analyserar innehållet…");
+    await handleScannedCode(code,"");
   }catch(err){
     $("#reader").innerHTML="";
-    $("#appStatus").textContent="Kunde inte läsa någon streckkod från bilden. Prova en skarpare bild eller skriv numret manuellt.";
+    $("#appStatus").textContent="Kunde inte läsa någon streckkod eller QR-kod från bilden. Prova en skarpare bild eller skriv numret manuellt.";
   }finally{
     e.target.value="";
   }
