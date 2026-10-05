@@ -596,12 +596,12 @@ function cameraErrorMessage(e){
   if(name==="NotReadableError" || name==="TrackStartError")
     return "Kameran används av en annan app eller kunde inte öppnas. Stäng andra kameraappar och försök igen.";
   if(name==="OverconstrainedError")
-    return "Den önskade kameran kunde inte väljas. Sundkollen provar en annan kamerametod.";
-  return "Kameran kunde inte startas i den här webbläsaren. Prova webbläsarens kameraåtkomst eller använd bild/skriftlig streckkod.";
+    return "Den önskade kameran kunde inte väljas. Sundkollen provar en enklare kamerainställning.";
+  return "Kameran kunde inte startas i den här webbläsaren. Prova bildval eller skriv streckkoden manuellt.";
 }
 
 function prepareVideo(){
-  $("#reader").innerHTML='<video id="barcodeVideo" autoplay playsinline muted style="width:100%;max-height:420px;object-fit:contain;border-radius:12px;background:#111"></video>';
+  $("#reader").innerHTML='<video id="barcodeVideo" autoplay playsinline muted style="display:block;width:100%;min-height:220px;max-height:65vh;aspect-ratio:4/3;object-fit:cover;border-radius:12px;background:#111"></video>';
   return $("#barcodeVideo");
 }
 
@@ -613,19 +613,19 @@ async function stopCamera(){
     zxingControls=null;
   }
   zxingReader=null;
+  const video=$("#barcodeVideo");
+  if(video?.srcObject){
+    try{video.srcObject.getTracks().forEach(t=>t.stop())}catch(e){}
+    video.srcObject=null;
+  }
   if(cameraStream){
-    cameraStream.getTracks().forEach(t=>t.stop());
+    try{cameraStream.getTracks().forEach(t=>t.stop())}catch(e){}
     cameraStream=null;
   }
   if(scanner){
     try{await scanner.stop()}catch(e){}
     try{scanner.clear()}catch(e){}
     scanner=null;
-  }
-  const video=$("#barcodeVideo");
-  if(video?.srcObject){
-    try{video.srcObject.getTracks().forEach(t=>t.stop())}catch(e){}
-    video.srcObject=null;
   }
   $("#reader").innerHTML="";
 }
@@ -639,62 +639,73 @@ async function handleScannedCode(raw){
   lookup(code);
 }
 
-async function startZXingCamera(){
-  if(!window.ZXingBrowser?.BrowserMultiFormatReader) throw new Error("ZXing kunde inte laddas");
-  const video=prepareVideo();
-  zxingReader=new ZXingBrowser.BrowserMultiFormatReader();
-
-  const constraintsList=[
-    {video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}},audio:false},
-    {video:{facingMode:"environment"},audio:false},
+async function openCameraPreview(){
+  const attempts=[
+    {video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:false},
+    {video:{facingMode:{ideal:"environment"}},audio:false},
     {video:true,audio:false}
   ];
-
   let lastError=null;
-  for(const constraints of constraintsList){
+  for(const constraints of attempts){
     try{
-      zxingControls=await zxingReader.decodeFromConstraints(
-        constraints,
-        video,
-        (result,error,controls)=>{
-          if(result){
-            const value=typeof result.getText==="function" ? result.getText() : (result.text||"");
-            handleScannedCode(value);
-          }
-        }
-      );
-      $("#appStatus").textContent="Kameran är igång. Håll streckkoden stilla och fyll större delen av kamerabilden.";
-      return true;
+      const stream=await navigator.mediaDevices.getUserMedia(constraints);
+      cameraStream=stream;
+      const video=prepareVideo();
+      video.srcObject=stream;
+
+      if(video.readyState<1){
+        await new Promise((resolve,reject)=>{
+          const timer=setTimeout(()=>reject(new Error("Kameran gav ingen videobild")),5000);
+          video.onloadedmetadata=()=>{clearTimeout(timer);resolve()};
+          video.onerror=()=>{clearTimeout(timer);reject(new Error("Videobilden kunde inte visas"))};
+        });
+      }
+
+      await video.play();
+
+      if(!video.videoWidth || !video.videoHeight){
+        await new Promise(r=>setTimeout(r,400));
+      }
+      if(!video.videoWidth || !video.videoHeight){
+        throw new Error("Kameraströmmen startade men gav inga bildrutor");
+      }
+
+      $("#appStatus").textContent="Kamerabilden är igång. Sundkollen söker efter streckkoden…";
+      return video;
     }catch(e){
       lastError=e;
-      try{zxingControls?.stop()}catch(_){}
-      zxingControls=null;
-      const old=$("#barcodeVideo");
-      if(old?.srcObject){
-        try{old.srcObject.getTracks().forEach(t=>t.stop())}catch(_){}
-        old.srcObject=null;
+      if(cameraStream){
+        try{cameraStream.getTracks().forEach(t=>t.stop())}catch(_){}
+        cameraStream=null;
       }
+      $("#reader").innerHTML="";
     }
   }
-  throw lastError||new Error("ZXing kunde inte starta kameran");
+  throw lastError||new Error("Kameran kunde inte öppnas");
 }
 
-async function startNativeBarcodeDetector(){
+async function startZXingOnStream(video){
+  if(!window.ZXingBrowser?.BrowserMultiFormatReader) throw new Error("ZXing kunde inte laddas");
+  zxingReader=new ZXingBrowser.BrowserMultiFormatReader();
+  zxingControls=await zxingReader.decodeFromStream(
+    cameraStream,
+    video,
+    (result,error,controls)=>{
+      if(result){
+        const value=typeof result.getText==="function" ? result.getText() : (result.text||"");
+        handleScannedCode(value);
+      }
+    }
+  );
+  return true;
+}
+
+async function startNativeOnStream(video){
   if(!("BarcodeDetector" in window)) throw new Error("BarcodeDetector saknas");
   const supported=await BarcodeDetector.getSupportedFormats();
   const wanted=["ean_13","ean_8","upc_a","upc_e","code_128","qr_code"].filter(x=>supported.includes(x));
   const detector=wanted.length ? new BarcodeDetector({formats:wanted}) : new BarcodeDetector();
-
-  cameraStream=await navigator.mediaDevices.getUserMedia({
-    video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},
-    audio:false
-  });
-
-  const video=prepareVideo();
-  video.srcObject=cameraStream;
-  await video.play();
   nativeScanning=true;
-  $("#appStatus").textContent="Kameran är igång. Sundkollen söker efter streckkoden.";
 
   const scanFrame=async()=>{
     if(!nativeScanning || !cameraStream)return;
@@ -713,21 +724,8 @@ async function startNativeBarcodeDetector(){
   return true;
 }
 
-async function startHtml5Fallback(){
-  if(typeof Html5Qrcode==="undefined")throw new Error("Reservskannern kunde inte laddas");
-  $("#reader").innerHTML="";
-  scanner=new Html5Qrcode("reader");
-  await scanner.start(
-    {facingMode:{ideal:"environment"}},
-    {fps:12,qrbox:{width:300,height:160},aspectRatio:1.777778},
-    code=>handleScannedCode(code)
-  );
-  $("#appStatus").textContent="Kameran är igång med reservläsaren. Håll streckkoden stilla.";
-  return true;
-}
-
 async function startCamera(){
-  if(scanner || cameraStream || zxingControls)return;
+  if(cameraStream || zxingControls)return;
   $("#appStatus").textContent="Startar kameran…";
 
   if(!window.isSecureContext){
@@ -739,35 +737,32 @@ async function startCamera(){
     return;
   }
 
-  let lastError=null;
+  let video;
   try{
-    await startZXingCamera();
-    return;
+    video=await openCameraPreview();
   }catch(e){
-    lastError=e;
     await stopCamera();
-    console.warn("ZXing-kameran misslyckades, provar nästa metod.",e);
+    $("#appStatus").textContent=cameraErrorMessage(e);
+    return;
   }
 
   try{
-    await startNativeBarcodeDetector();
+    await startZXingOnStream(video);
+    $("#appStatus").textContent="Kameran är igång. Håll streckkoden stilla och fyll en stor del av bilden.";
     return;
   }catch(e){
-    lastError=e;
-    await stopCamera();
-    console.warn("BarcodeDetector misslyckades, provar reservläsaren.",e);
+    console.warn("ZXing kunde inte kopplas till videoströmmen.",e);
   }
 
   try{
-    await startHtml5Fallback();
+    await startNativeOnStream(video);
+    $("#appStatus").textContent="Kameran är igång. Sundkollen söker efter streckkoden.";
     return;
   }catch(e){
-    lastError=e;
-    await stopCamera();
-    console.warn("Alla livekamerametoder misslyckades.",e);
+    console.warn("Webbläsarens streckkodsläsare kunde inte starta.",e);
   }
 
-  $("#appStatus").textContent=cameraErrorMessage(lastError);
+  $("#appStatus").textContent="Kamerabilden fungerar, men automatisk streckkodsläsning stöds inte av den här webbläsaren. Ta en bild av streckkoden eller skriv numret.";
 }
 
 $("#scan").onclick=startCamera;
