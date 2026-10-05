@@ -112,6 +112,7 @@ input{font-size:1rem}
 <label for="ocrText"><b>Text som Sundkollen läste</b></label>
 <textarea id="ocrText" style="width:100%;min-height:180px" aria-describedby="ocrVerify"></textarea>
 <p id="ocrVerify" class="warn"><b>Kontrollera texten mot förpackningen.</b> OCR kan läsa fel, särskilt liten, böjd eller glansig text.</p>
+<div id="ocrOriginMap" class="status hidden" aria-live="polite"></div>
 <div class="ocr-actions"><button id="useOcr" type="button">Bekräfta och analysera text</button><button id="clearOcr" class="secondary" type="button">Rensa</button></div>
 </div>
 </div>
@@ -223,11 +224,177 @@ function svCountryText(text){
     .replace(/Netherlands/gi,"Nederländerna")
     .replace(/Belgium/gi,"Belgien");
 }
+
+const ORIGIN_PLACES=[
+{name:"Sverige",continent:"Europa",aliases:["sverige","sweden"]},
+{name:"Norge",continent:"Europa",aliases:["norge","norway"]},
+{name:"Danmark",continent:"Europa",aliases:["danmark","denmark"]},
+{name:"Finland",continent:"Europa",aliases:["finland"]},
+{name:"Island",continent:"Europa",aliases:["island","iceland"]},
+{name:"Tyskland",continent:"Europa",aliases:["tyskland","germany"]},
+{name:"Frankrike",continent:"Europa",aliases:["frankrike","france"]},
+{name:"Italien",continent:"Europa",aliases:["italien","italy"]},
+{name:"Spanien",continent:"Europa",aliases:["spanien","spain"]},
+{name:"Portugal",continent:"Europa",aliases:["portugal"]},
+{name:"Nederländerna",continent:"Europa",aliases:["nederländerna","nederlanderna","netherlands","holland"]},
+{name:"Belgien",continent:"Europa",aliases:["belgien","belgium"]},
+{name:"Polen",continent:"Europa",aliases:["polen","poland"]},
+{name:"Grekland",continent:"Europa",aliases:["grekland","greece"]},
+{name:"Irland",continent:"Europa",aliases:["irland","ireland"]},
+{name:"Storbritannien",continent:"Europa",aliases:["storbritannien","united kingdom","great britain"]},
+{name:"Österrike",continent:"Europa",aliases:["österrike","osterrike","austria"]},
+{name:"Schweiz",continent:"Europa",aliases:["schweiz","switzerland"]},
+{name:"Tjeckien",continent:"Europa",aliases:["tjeckien","czechia","czech republic"]},
+{name:"Ungern",continent:"Europa",aliases:["ungern","hungary"]},
+{name:"Rumänien",continent:"Europa",aliases:["rumänien","rumanien","romania"]},
+{name:"Bulgarien",continent:"Europa",aliases:["bulgarien","bulgaria"]},
+{name:"Ukraina",continent:"Europa",aliases:["ukraina","ukraine"]},
+{name:"Turkiet",continent:"Europa/Asien",aliases:["turkiet","turkey","türkiye","turkiye"]},
+{name:"Kina",continent:"Asien",aliases:["kina","china"]},
+{name:"Japan",continent:"Asien",aliases:["japan"]},
+{name:"Sydkorea",continent:"Asien",aliases:["sydkorea","south korea","republic of korea"]},
+{name:"Indien",continent:"Asien",aliases:["indien","india"]},
+{name:"Thailand",continent:"Asien",aliases:["thailand"]},
+{name:"Vietnam",continent:"Asien",aliases:["vietnam"]},
+{name:"Indonesien",continent:"Asien",aliases:["indonesien","indonesia"]},
+{name:"Malaysia",continent:"Asien",aliases:["malaysia"]},
+{name:"Filippinerna",continent:"Asien",aliases:["filippinerna","philippines"]},
+{name:"Sri Lanka",continent:"Asien",aliases:["sri lanka"]},
+{name:"Pakistan",continent:"Asien",aliases:["pakistan"]},
+{name:"Israel",continent:"Asien",aliases:["israel"]},
+{name:"USA",continent:"Nordamerika",aliases:["usa","united states","united states of america"]},
+{name:"Kanada",continent:"Nordamerika",aliases:["kanada","canada"]},
+{name:"Mexiko",continent:"Nordamerika",aliases:["mexiko","mexico"]},
+{name:"Costa Rica",continent:"Nordamerika",aliases:["costa rica"]},
+{name:"Guatemala",continent:"Nordamerika",aliases:["guatemala"]},
+{name:"Brasilien",continent:"Sydamerika",aliases:["brasilien","brazil"]},
+{name:"Argentina",continent:"Sydamerika",aliases:["argentina"]},
+{name:"Chile",continent:"Sydamerika",aliases:["chile"]},
+{name:"Peru",continent:"Sydamerika",aliases:["peru"]},
+{name:"Colombia",continent:"Sydamerika",aliases:["colombia"]},
+{name:"Ecuador",continent:"Sydamerika",aliases:["ecuador"]},
+{name:"Australien",continent:"Oceanien",aliases:["australien","australia"]},
+{name:"Nya Zeeland",continent:"Oceanien",aliases:["nya zeeland","new zealand"]},
+{name:"Sydafrika",continent:"Afrika",aliases:["sydafrika","south africa"]},
+{name:"Marocko",continent:"Afrika",aliases:["marocko","morocco"]},
+{name:"Egypten",continent:"Afrika",aliases:["egypten","egypt"]},
+{name:"Kenya",continent:"Afrika",aliases:["kenya"]},
+{name:"Etiopien",continent:"Afrika",aliases:["etiopien","ethiopia"]},
+{name:"Ghana",continent:"Afrika",aliases:["ghana"]},
+{name:"Elfenbenskusten",continent:"Afrika",aliases:["elfenbenskusten","ivory coast","côte d'ivoire","cote d'ivoire"]},
+{name:"Madagaskar",continent:"Afrika",aliases:["madagaskar","madagascar"]}
+];
+const ORIGIN_REGIONS=[
+{name:"Europa",aliases:["europa","europe","european union"]},
+{name:"Asien",aliases:["asien","asia"]},
+{name:"Afrika",aliases:["afrika","africa"]},
+{name:"Nordamerika",aliases:["nordamerika","north america"]},
+{name:"Sydamerika",aliases:["sydamerika","south america"]},
+{name:"Oceanien",aliases:["oceanien","oceania"]},
+{name:"Mellanamerika",aliases:["mellanamerika","central america"]},
+{name:"Mellanöstern",aliases:["mellanöstern","mellanostern","middle east"]}
+];
+function foldGeo(x){
+ return String(x||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[_-]+/g," ");
+}
+function hasGeoAlias(haystack,alias){
+ const h=" "+foldGeo(haystack).replace(/[^a-z0-9åäöæøéèêçñü' ]/gi," ")+" ";
+ const a=foldGeo(alias);
+ return h.includes(" "+a+" ");
+}
+function detectOriginPlaces(text){
+ const found=[];
+ for(const p of ORIGIN_PLACES){
+  if(p.aliases.some(a=>hasGeoAlias(text,a))) found.push({name:p.name,continent:p.continent,level:"land"});
+ }
+ for(const r of ORIGIN_REGIONS){
+  if(r.aliases.some(a=>hasGeoAlias(text,a)) && !found.some(x=>x.continent===r.name)){
+   found.push({name:r.name,continent:r.name,level:"region"});
+  }
+ }
+ return found.filter((x,i,a)=>a.findIndex(y=>y.name===x.name)===i);
+}
+function escapeRx(x){return String(x).replace(/[|\\{}()[\]^$+*?.-]/g,"\\async function lookup(code){")}
+function stripGeoWords(text){
+ let out=String(text||"");
+ const aliases=[...ORIGIN_PLACES.flatMap(x=>x.aliases),...ORIGIN_REGIONS.flatMap(x=>x.aliases)].sort((a,b)=>b.length-a.length);
+ for(const a of aliases) out=out.replace(new RegExp("\\b"+escapeRx(a)+"\\b","gi")," ");
+ return out
+  .replace(/\b(ursprung|origin|från|from|odlad i|grown in|producerad i|produced in|tillverkad i|made in)\b\s*[:\-]?/gi," ")
+  .replace(/[()\[\]]/g," ")
+  .replace(/\s+/g," ").replace(/^[\s:;,.\-]+|[\s:;,.\-]+$/g,"").trim();
+}
+function ingredientOriginPairs(text){
+ const clauses=String(text||"").replace(/\r/g,"\n").split(/[;,\n•]+/).map(x=>x.trim()).filter(Boolean);
+ const pairs=[];
+ for(const clause of clauses){
+  const places=detectOriginPlaces(clause);
+  if(!places.length) continue;
+  if(/^\s*(ursprung|origin|made in|tillverkad i|producerad i|countries?|länder?)\b/i.test(clause)) continue;
+  let ingredient=stripGeoWords(clause)
+   .replace(/^\s*(ingredienser|ingredients)\s*:\s*/i,"")
+   .replace(/\b\d+(?:[.,]\d+)?\s*%/g,"")
+   .replace(/\s+/g," ").trim();
+  if(ingredient.length<2) continue;
+  pairs.push({ingredient,places});
+ }
+ return pairs.filter((x,i,a)=>a.findIndex(y=>foldGeo(y.ingredient)===foldGeo(x.ingredient))===i).slice(0,20);
+}
+function originBadgeText(place){
+ return place.level==="land" ? place.name+" · "+place.continent : place.name+" · land ej angivet";
+}
+function renderOriginAnalysisFromText(text){
+ const pairs=ingredientOriginPairs(text), all=detectOriginPlaces(text);
+ let out="";
+ if(pairs.length){
+  out+="<b>Ingrediens → ursprung</b><ul>";
+  for(const p of pairs) out+="<li><b>"+esc(p.ingredient)+":</b> "+p.places.map(x=>esc(originBadgeText(x))).join(", ")+"</li>";
+  out+="</ul><small>Kopplingen visas bara när ingrediens/råvara och plats förekommer i samma del av texten.</small>";
+ }else if(all.length){
+  out+="<b>Ursprung hittat, men inte säkert kopplat till en viss ingrediens:</b><ul>";
+  for(const p of all) out+="<li>"+esc(originBadgeText(p))+"</li>";
+  out+="</ul>";
+ }else out+="<b>Ingen säker ursprungsuppgift kunde kopplas till ingredienserna.</b> Kontrollera förpackningen.";
+ return out;
+}
+function aggregatedOriginData(p){
+ const a=p?.ecoscore_data?.adjustments?.origins_of_ingredients?.aggregated_origins
+  ||p?.environmental_score_data?.adjustments?.origins_of_ingredients?.aggregated_origins||[];
+ return Array.isArray(a)?a:[];
+}
+function renderIngredientOriginSection(p){
+ const pairs=ingredientOriginPairs(p.ingredients_text||"");
+ const originPlaces=detectOriginPlaces([p.origins||"",...(p.origins_tags||[])].join(" "));
+ const agg=aggregatedOriginData(p);
+ let html='<div class="item"><b>Ingredienser/råvaror och ursprung</b>';
+ if(pairs.length){
+  html+='<ul>';
+  for(const pair of pairs) html+='<li><b>'+esc(pair.ingredient)+':</b> '+pair.places.map(x=>esc(originBadgeText(x))).join(", ")+'</li>';
+  html+='</ul><small>Visas bara när land eller region kan kopplas direkt till samma del av ingredienstexten.</small>';
+ }else html+='<p>Databasen kan inte säkert koppla ett land till en viss ingrediens i den här varan.</p>';
+ if(agg.length){
+  html+='<p><b>Databasens ursprungsfördelning:</b></p><ul>';
+  for(const x of agg.slice(0,12)){
+   const detected=detectOriginPlaces(x.origin||"");
+   const label=detected.length?detected.map(originBadgeText).join(", "):svCountryText(x.origin||"Okänd plats");
+   const pct=(typeof x.percent==="number")?" – "+x.percent+" %":"";
+   html+='<li>'+esc(label+pct)+'</li>';
+  }
+  html+='</ul><small>Fördelningen kan visa land eller region och är inte alltid kopplad till en namngiven ingrediens.</small>';
+ }else if(originPlaces.length){
+  html+='<p><b>Registrerade ursprungsplatser utan säker ingredienskoppling:</b></p><ul>';
+  for(const x of originPlaces) html+='<li>'+esc(originBadgeText(x))+'</li>';
+  html+='</ul>';
+ }
+ html+='</div>';
+ return html;
+}
+
 async function lookup(code){
   code=(code||"").trim(); if(!code){$("#appStatus").textContent="Skriv eller skanna en streckkod först."; $("#barcode").focus(); return;}
   $("#result").setAttribute("aria-busy","true"); $("#appStatus").textContent="Söker efter produkten…"; $("#result").innerHTML='<div class="card"><p>Söker…</p></div>';
   try{
-    const u=`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=code,product_name,brands,image_front_small_url,ingredients_text,additives_tags,allergens_tags,nutriscore_grade,nova_group,nutriments,countries_tags,origins,origins_tags,manufacturing_places,manufacturing_places_tags,emb_codes,packaging_text,producer,producer_version_id`;
+    const u=`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=code,product_name,brands,image_front_small_url,ingredients_text,ingredients,additives_tags,allergens_tags,nutriscore_grade,nova_group,nutriments,countries_tags,origins,origins_tags,manufacturing_places,manufacturing_places_tags,emb_codes,packaging_text,producer,producer_version_id,ecoscore_data,environmental_score_data`;
     const r=await fetch(u); const d=await r.json();
     if(!d.product){$("#result").setAttribute("aria-busy","false"); $("#appStatus").textContent="Produkten hittades inte."; $("#result").innerHTML='<div class="card"><h2>Produkten hittades inte</h2><p>Kontrollera streckkoden. Senare kan vi lägga till fotografering av ingredienslistan.</p></div>';return}
     const p=d.product, adds=p.additives_tags||[], alg=p.allergens_tags||[];
@@ -253,6 +420,7 @@ async function lookup(code){
     } else {
       html+=`<div class="item"><b>Råvaruursprung:</b> Okänt<br><span class="badge gray">Kontrollera förpackningen</span></div>`;
     }
+    html+=renderIngredientOriginSection(p);
     if(places) html+=`<div class="item"><b>Tillverknings-/förpackningsplats:</b> ${esc(svCountryText(places))}<br><span class="badge yellow">Produktdata</span></div>`;
     if(emb) html+=`<div class="item"><b>Anläggnings-/kontrollkod:</b> ${esc(emb)}<br><span class="badge yellow">Kan ge ytterligare spårbarhet</span></div>`;
     if(countries.length) html+=`<div class="item"><b>Länder där produkten är registrerad/såld:</b> ${esc(countries.join(", "))}<br><small>Detta beskriver inte nödvändigtvis råvarornas ursprung eller var produkten tillverkades.</small></div>`;
@@ -484,7 +652,7 @@ $("#runOcr").onclick=async()=>{
    $("#ocrStatus").textContent="Textläsningen misslyckades. Du kan fortfarande skriva av uppgifterna manuellt.";
  }finally{$("#runOcr").disabled=false}
 };
-$("#clearOcr").onclick=()=>{$("#ocrText").value="";$("#ocrResultWrap").classList.add("hidden");ocrConfirmed=false};
+$("#clearOcr").onclick=()=>{$("#ocrText").value="";$("#ocrResultWrap").classList.add("hidden");$("#ocrOriginMap").classList.add("hidden");$("#ocrOriginMap").innerHTML="";ocrConfirmed=false};
 $("#useOcr").onclick=()=>{
  const t=$("#ocrText").value.trim();
  if(!t){$("#ocrStatus").textContent="Det finns ingen text att analysera.";return}
@@ -497,7 +665,10 @@ $("#useOcr").onclick=()=>{
  if(plant && !$("#plantNote").value) $("#plantNote").value=plant;
  if(batch && !$("#batchNote").value) $("#batchNote").value=batch;
  ocrConfirmed=true;
- $("#ocrStatus").textContent="OCR-texten är bekräftad. Kontrollera de föreslagna fälten och ändra vid behov innan du sparar.";
+ const originMap=$("#ocrOriginMap");
+ originMap.innerHTML=renderOriginAnalysisFromText(t);
+ originMap.classList.remove("hidden");
+ $("#ocrStatus").textContent="OCR-texten är bekräftad. Kontrollera både texten och ursprungskopplingarna mot förpackningen.";
  $("#originNote").focus();
 };
 
