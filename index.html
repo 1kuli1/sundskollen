@@ -84,6 +84,11 @@ input{font-size:1rem}
 <div id="reader" aria-label="Kameravy för streckkodsskanning"></div>
 <p id="cameraHelp"><small>Rikta kameran mot streckkoden och håll den stilla. Sundkollen provar automatiskt flera kamerametoder för mobil, surfplatta och dator. Du kan alltid välja en bild eller skriva numret manuellt.</small></p>
 <div class="row" role="group" aria-label="Kamerakontroller"><button id="scan" type="button">Starta kamera</button><button class="secondary" id="stop" type="button">Stoppa kamera</button></div>
+<div id="cameraStatus" class="status" role="status" aria-live="polite" style="margin-top:10px">Kameran är inte startad.</div>
+<div id="cameraChoiceWrap" class="hidden" style="margin-top:10px">
+<label for="cameraSelect"><b>Välj kamera</b></label>
+<select id="cameraSelect" style="box-sizing:border-box;width:100%;padding:13px;border:1px solid #aebdb3;border-radius:10px;margin:8px 0"></select>
+</div>
 <label for="barcodeImage" style="display:block;margin-top:12px"><b>Alternativ: välj en bild av streckkoden</b></label>
 <input id="barcodeImage" type="file" accept="image/*" aria-describedby="barcodeImageHelp">
 <div id="barcodeImageHelp"><small>Fungerar även om webbläsaren inte ger direkt åtkomst till kameran.</small></div>
@@ -586,26 +591,33 @@ let scanTimer=null;
 let nativeScanning=false;
 let zxingReader=null;
 let zxingControls=null;
+let selectedCameraId=null;
+
+function setCameraStatus(msg){
+  const el=$("#cameraStatus");
+  if(el)el.textContent=msg;
+  $("#appStatus").textContent=msg;
+}
 
 function cameraErrorMessage(e){
   const name=e?.name||"";
   if(name==="NotAllowedError" || name==="PermissionDeniedError")
-    return "Kameran är blockerad. Tillåt kamera för Sundkollen i webbläsarens webbplatsinställningar och försök igen.";
+    return "Kameran är blockerad för den här webbplatsen. Tillåt kamera i webbläsarens webbplatsinställningar och tryck sedan Starta kamera igen.";
   if(name==="NotFoundError" || name==="DevicesNotFoundError")
     return "Ingen kamera hittades på enheten.";
   if(name==="NotReadableError" || name==="TrackStartError")
-    return "Kameran används av en annan app eller kunde inte öppnas. Stäng andra kameraappar och försök igen.";
+    return "Kameran kunde inte öppnas. Den kan användas av en annan app. Stäng andra kameraappar och försök igen.";
   if(name==="OverconstrainedError")
-    return "Den önskade kameran kunde inte väljas. Sundkollen provar en enklare kamerainställning.";
-  return "Kameran kunde inte startas i den här webbläsaren. Prova bildval eller skriv streckkoden manuellt.";
+    return "Den valda kameran kunde inte öppnas. Prova en annan kamera i listan.";
+  return "Kameran kunde inte startas: "+(e?.message||"okänt fel")+". Du kan fortfarande välja en bild av streckkoden.";
 }
 
 function prepareVideo(){
-  $("#reader").innerHTML='<video id="barcodeVideo" autoplay playsinline muted style="display:block;width:100%;min-height:220px;max-height:65vh;aspect-ratio:4/3;object-fit:cover;border-radius:12px;background:#111"></video>';
+  $("#reader").innerHTML='<video id="barcodeVideo" autoplay playsinline webkit-playsinline muted style="display:block;width:100%;min-height:240px;max-height:65vh;aspect-ratio:4/3;object-fit:cover;border-radius:12px;background:#111"></video>';
   return $("#barcodeVideo");
 }
 
-async function stopCamera(){
+async function stopCamera(clearStatus=false){
   nativeScanning=false;
   if(scanTimer){clearTimeout(scanTimer);scanTimer=null;}
   if(zxingControls){
@@ -628,60 +640,111 @@ async function stopCamera(){
     scanner=null;
   }
   $("#reader").innerHTML="";
+  if(clearStatus)setCameraStatus("Kameran är stoppad.");
 }
 
 async function handleScannedCode(raw){
   const code=String(raw||"").trim();
   if(!code)return;
   $("#barcode").value=code;
-  $("#appStatus").textContent="Streckkoden hittades. Hämtar produktdata…";
-  await stopCamera();
+  setCameraStatus("Streckkoden hittades. Hämtar produktdata…");
+  await stopCamera(false);
   lookup(code);
 }
 
-async function openCameraPreview(){
-  const attempts=[
-    {video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:false},
-    {video:{facingMode:{ideal:"environment"}},audio:false},
-    {video:true,audio:false}
-  ];
-  let lastError=null;
-  for(const constraints of attempts){
-    try{
-      const stream=await navigator.mediaDevices.getUserMedia(constraints);
-      cameraStream=stream;
-      const video=prepareVideo();
-      video.srcObject=stream;
+async function cameraPermissionState(){
+  try{
+    if(!navigator.permissions?.query)return "unknown";
+    const p=await navigator.permissions.query({name:"camera"});
+    return p.state||"unknown";
+  }catch(e){return "unknown"}
+}
 
-      if(video.readyState<1){
-        await new Promise((resolve,reject)=>{
-          const timer=setTimeout(()=>reject(new Error("Kameran gav ingen videobild")),5000);
-          video.onloadedmetadata=()=>{clearTimeout(timer);resolve()};
-          video.onerror=()=>{clearTimeout(timer);reject(new Error("Videobilden kunde inte visas"))};
-        });
-      }
+async function listCameras(){
+  try{
+    const devices=await navigator.mediaDevices.enumerateDevices();
+    return devices.filter(d=>d.kind==="videoinput");
+  }catch(e){return[]}
+}
 
-      await video.play();
+function populateCameraChoice(cameras,currentId){
+  const wrap=$("#cameraChoiceWrap"), sel=$("#cameraSelect");
+  if(!wrap||!sel)return;
+  sel.innerHTML="";
+  cameras.forEach((c,i)=>{
+    const o=document.createElement("option");
+    o.value=c.deviceId;
+    o.textContent=c.label||("Kamera "+(i+1));
+    if(c.deviceId===currentId)o.selected=true;
+    sel.appendChild(o);
+  });
+  wrap.classList.toggle("hidden",cameras.length<2);
+}
 
-      if(!video.videoWidth || !video.videoHeight){
-        await new Promise(r=>setTimeout(r,400));
-      }
-      if(!video.videoWidth || !video.videoHeight){
-        throw new Error("Kameraströmmen startade men gav inga bildrutor");
-      }
+function preferredRearCamera(cameras){
+  return cameras.find(c=>/(back|rear|environment|bakre|baksida|camera2 0)/i.test(c.label||""))||null;
+}
 
-      $("#appStatus").textContent="Kamerabilden är igång. Sundkollen söker efter streckkoden…";
-      return video;
-    }catch(e){
-      lastError=e;
-      if(cameraStream){
-        try{cameraStream.getTracks().forEach(t=>t.stop())}catch(_){}
-        cameraStream=null;
+async function attachAndVerifyStream(stream){
+  cameraStream=stream;
+  const video=prepareVideo();
+  video.srcObject=stream;
+  video.muted=true;
+  video.setAttribute("playsinline","");
+  try{await video.play()}catch(e){}
+
+  for(let i=0;i<40;i++){
+    if(video.videoWidth>0 && video.videoHeight>0 && video.readyState>=2)return video;
+    await new Promise(r=>setTimeout(r,100));
+  }
+  throw new Error("kameran startade men ingen videobild kom fram");
+}
+
+async function openCameraPreview(deviceId=null){
+  const permission=await cameraPermissionState();
+  if(permission==="denied"){
+    const err=new Error("kamerabehörigheten är blockerad");
+    err.name="NotAllowedError";
+    throw err;
+  }
+
+  setCameraStatus(permission==="prompt" ? "Webbläsaren frågar efter kamerabehörighet. Välj Tillåt." : "Öppnar kameran…");
+
+  // Börja med den enklaste möjliga begäran. Det ger bäst kompatibilitet och låser upp kameralabels.
+  let firstStream=null;
+  try{
+    firstStream=await navigator.mediaDevices.getUserMedia(
+      deviceId ? {video:{deviceId:{exact:deviceId}},audio:false} : {video:true,audio:false}
+    );
+  }catch(e){
+    if(deviceId){
+      firstStream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+    }else throw e;
+  }
+
+  let currentId=firstStream.getVideoTracks?.()[0]?.getSettings?.().deviceId||"";
+  let cameras=await listCameras();
+
+  // Efter första tillståndet känner webbläsaren normalt kamerornas namn. Välj bakre kamera automatiskt på mobil.
+  if(!deviceId && cameras.length>1){
+    const rear=preferredRearCamera(cameras);
+    if(rear && rear.deviceId && rear.deviceId!==currentId){
+      try{
+        firstStream.getTracks().forEach(t=>t.stop());
+        firstStream=await navigator.mediaDevices.getUserMedia({video:{deviceId:{exact:rear.deviceId}},audio:false});
+        currentId=rear.deviceId;
+        selectedCameraId=rear.deviceId;
+      }catch(e){
+        // Om bakre kameran inte går att öppna, återgå till standardkameran.
+        try{firstStream=await navigator.mediaDevices.getUserMedia({video:true,audio:false})}catch(_){throw e}
+        currentId=firstStream.getVideoTracks?.()[0]?.getSettings?.().deviceId||"";
       }
-      $("#reader").innerHTML="";
     }
   }
-  throw lastError||new Error("Kameran kunde inte öppnas");
+
+  populateCameraChoice(cameras,currentId);
+  selectedCameraId=currentId||deviceId||selectedCameraId;
+  return await attachAndVerifyStream(firstStream);
 }
 
 async function startZXingOnStream(video){
@@ -690,7 +753,7 @@ async function startZXingOnStream(video){
   zxingControls=await zxingReader.decodeFromStream(
     cameraStream,
     video,
-    (result,error,controls)=>{
+    result=>{
       if(result){
         const value=typeof result.getText==="function" ? result.getText() : (result.text||"");
         handleScannedCode(value);
@@ -724,31 +787,34 @@ async function startNativeOnStream(video){
   return true;
 }
 
-async function startCamera(){
-  if(cameraStream || zxingControls)return;
-  $("#appStatus").textContent="Startar kameran…";
+async function startCamera(deviceId=null){
+  if(deviceId && typeof deviceId!=="string")deviceId=null;
+  if(cameraStream || zxingControls)await stopCamera(false);
+  setCameraStatus("Kontrollerar kameran…");
 
   if(!window.isSecureContext){
-    $("#appStatus").textContent="Kameran kräver en säker HTTPS-adress.";
+    setCameraStatus("Kameran kräver en säker HTTPS-adress.");
     return;
   }
   if(!navigator.mediaDevices?.getUserMedia){
-    $("#appStatus").textContent="Den här webbläsaren saknar stöd för direkt kameraåtkomst. Använd bildval eller skriv streckkoden.";
+    setCameraStatus("Den här webbläsaren saknar direkt kameraåtkomst. Använd bildvalet i stället.");
     return;
   }
 
   let video;
   try{
-    video=await openCameraPreview();
+    video=await openCameraPreview(deviceId);
   }catch(e){
-    await stopCamera();
-    $("#appStatus").textContent=cameraErrorMessage(e);
+    await stopCamera(false);
+    setCameraStatus(cameraErrorMessage(e));
     return;
   }
 
+  setCameraStatus("Kamerabilden fungerar. Startar streckkodsläsningen…");
+
   try{
     await startZXingOnStream(video);
-    $("#appStatus").textContent="Kameran är igång. Håll streckkoden stilla och fyll en stor del av bilden.";
+    setCameraStatus("Kameran är igång. Håll streckkoden stilla och fyll en stor del av bilden.");
     return;
   }catch(e){
     console.warn("ZXing kunde inte kopplas till videoströmmen.",e);
@@ -756,17 +822,21 @@ async function startCamera(){
 
   try{
     await startNativeOnStream(video);
-    $("#appStatus").textContent="Kameran är igång. Sundkollen söker efter streckkoden.";
+    setCameraStatus("Kameran är igång. Sundkollen söker efter streckkoden.");
     return;
   }catch(e){
     console.warn("Webbläsarens streckkodsläsare kunde inte starta.",e);
   }
 
-  $("#appStatus").textContent="Kamerabilden fungerar, men automatisk streckkodsläsning stöds inte av den här webbläsaren. Ta en bild av streckkoden eller skriv numret.";
+  setCameraStatus("Kamerabilden fungerar, men automatisk avläsning kunde inte starta. Använd bild av streckkoden som reserv.");
 }
 
-$("#scan").onclick=startCamera;
-$("#stop").onclick=stopCamera;
+$("#scan").onclick=()=>startCamera();
+$("#stop").onclick=()=>stopCamera(true);
+$("#cameraSelect").addEventListener("change",e=>{
+  selectedCameraId=e.target.value||null;
+  startCamera(selectedCameraId);
+});
 
 $("#barcodeImage").addEventListener("change",async e=>{
   const file=e.target.files?.[0];
@@ -920,7 +990,7 @@ function showView(id){
   if(id==="historyView"){renderHistory();renderTraceHistory();}
 }
 document.querySelectorAll(".bottomnav button").forEach(b=>b.onclick=()=>showView(b.dataset.view));
-$("#homeScan").onclick=()=>{showView("scanView");startCamera()};
+$("#homeScan").onclick=()=>{showView("scanView");setCameraStatus("Tryck Starta kamera om kameran inte öppnas automatiskt.");startCamera()};
 $("#homeCode").onclick=()=>{showView("scanView");setTimeout(()=>$("#barcode").focus(),100)};
 
 function getHistory(){try{return JSON.parse(localStorage.getItem("sundkollen-history")||"[]")}catch(e){return[]}}
