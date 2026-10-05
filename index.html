@@ -82,7 +82,7 @@ input{font-size:1rem}
 <p><b>Du behöver inte fylla i några uppgifter först.</b> Skanna streckkoden, välj en bild eller skriv numret manuellt.</p>
 <h2>Streckkod och produktdata</h2>
 <div id="reader" aria-label="Kameravy för streckkodsskanning"></div>
-<p id="cameraHelp"><small>Rikta kameran mot streckkoden. Du kan alltid skriva numret manuellt.</small></p>
+<p id="cameraHelp"><small>Rikta kameran mot streckkoden och håll den stilla. Sundkollen provar automatiskt flera kamerametoder för mobil, surfplatta och dator. Du kan alltid välja en bild eller skriva numret manuellt.</small></p>
 <div class="row" role="group" aria-label="Kamerakontroller"><button id="scan" type="button">Starta kamera</button><button class="secondary" id="stop" type="button">Stoppa kamera</button></div>
 <label for="barcodeImage" style="display:block;margin-top:12px"><b>Alternativ: välj en bild av streckkoden</b></label>
 <input id="barcodeImage" type="file" accept="image/*" aria-describedby="barcodeImageHelp">
@@ -189,6 +189,7 @@ input{font-size:1rem}
 <button data-view="settingsView">Inställningar</button>
 </nav>
 </main>
+<script src="https://unpkg.com/@zxing/browser@0.2.1"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
 const $=s=>document.querySelector(s);
@@ -437,6 +438,8 @@ $("#barcode").addEventListener("keydown",e=>{if(e.key==="Enter")lookup(e.target.
 let cameraStream=null;
 let scanTimer=null;
 let nativeScanning=false;
+let zxingReader=null;
+let zxingControls=null;
 
 function cameraErrorMessage(e){
   const name=e?.name||"";
@@ -447,13 +450,23 @@ function cameraErrorMessage(e){
   if(name==="NotReadableError" || name==="TrackStartError")
     return "Kameran används av en annan app eller kunde inte öppnas. Stäng andra kameraappar och försök igen.";
   if(name==="OverconstrainedError")
-    return "Bakre kameran kunde inte väljas automatiskt. Försök igen eller skriv streckkoden manuellt.";
-  return "Kameran kunde inte startas. Öppna gärna Sundkollen direkt i Chrome eller Samsung Internet, tillåt kamera och försök igen.";
+    return "Den önskade kameran kunde inte väljas. Sundkollen provar en annan kamerametod.";
+  return "Kameran kunde inte startas i den här webbläsaren. Prova webbläsarens kameraåtkomst eller använd bild/skriftlig streckkod.";
+}
+
+function prepareVideo(){
+  $("#reader").innerHTML='<video id="barcodeVideo" autoplay playsinline muted style="width:100%;max-height:420px;object-fit:contain;border-radius:12px;background:#111"></video>';
+  return $("#barcodeVideo");
 }
 
 async function stopCamera(){
   nativeScanning=false;
   if(scanTimer){clearTimeout(scanTimer);scanTimer=null;}
+  if(zxingControls){
+    try{zxingControls.stop()}catch(e){}
+    zxingControls=null;
+  }
+  zxingReader=null;
   if(cameraStream){
     cameraStream.getTracks().forEach(t=>t.stop());
     cameraStream=null;
@@ -463,11 +476,112 @@ async function stopCamera(){
     try{scanner.clear()}catch(e){}
     scanner=null;
   }
+  const video=$("#barcodeVideo");
+  if(video?.srcObject){
+    try{video.srcObject.getTracks().forEach(t=>t.stop())}catch(e){}
+    video.srcObject=null;
+  }
   $("#reader").innerHTML="";
 }
 
+async function handleScannedCode(raw){
+  const code=String(raw||"").trim();
+  if(!code)return;
+  $("#barcode").value=code;
+  $("#appStatus").textContent="Streckkoden hittades. Hämtar produktdata…";
+  await stopCamera();
+  lookup(code);
+}
+
+async function startZXingCamera(){
+  if(!window.ZXingBrowser?.BrowserMultiFormatReader) throw new Error("ZXing kunde inte laddas");
+  const video=prepareVideo();
+  zxingReader=new ZXingBrowser.BrowserMultiFormatReader();
+
+  const constraintsList=[
+    {video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}},audio:false},
+    {video:{facingMode:"environment"},audio:false},
+    {video:true,audio:false}
+  ];
+
+  let lastError=null;
+  for(const constraints of constraintsList){
+    try{
+      zxingControls=await zxingReader.decodeFromConstraints(
+        constraints,
+        video,
+        (result,error,controls)=>{
+          if(result){
+            const value=typeof result.getText==="function" ? result.getText() : (result.text||"");
+            handleScannedCode(value);
+          }
+        }
+      );
+      $("#appStatus").textContent="Kameran är igång. Håll streckkoden stilla och fyll större delen av kamerabilden.";
+      return true;
+    }catch(e){
+      lastError=e;
+      try{zxingControls?.stop()}catch(_){}
+      zxingControls=null;
+      const old=$("#barcodeVideo");
+      if(old?.srcObject){
+        try{old.srcObject.getTracks().forEach(t=>t.stop())}catch(_){}
+        old.srcObject=null;
+      }
+    }
+  }
+  throw lastError||new Error("ZXing kunde inte starta kameran");
+}
+
+async function startNativeBarcodeDetector(){
+  if(!("BarcodeDetector" in window)) throw new Error("BarcodeDetector saknas");
+  const supported=await BarcodeDetector.getSupportedFormats();
+  const wanted=["ean_13","ean_8","upc_a","upc_e","code_128","qr_code"].filter(x=>supported.includes(x));
+  const detector=wanted.length ? new BarcodeDetector({formats:wanted}) : new BarcodeDetector();
+
+  cameraStream=await navigator.mediaDevices.getUserMedia({
+    video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},
+    audio:false
+  });
+
+  const video=prepareVideo();
+  video.srcObject=cameraStream;
+  await video.play();
+  nativeScanning=true;
+  $("#appStatus").textContent="Kameran är igång. Sundkollen söker efter streckkoden.";
+
+  const scanFrame=async()=>{
+    if(!nativeScanning || !cameraStream)return;
+    try{
+      if(video.readyState>=2){
+        const codes=await detector.detect(video);
+        if(codes?.length){
+          await handleScannedCode(codes[0].rawValue);
+          return;
+        }
+      }
+    }catch(e){}
+    scanTimer=setTimeout(scanFrame,180);
+  };
+  scanFrame();
+  return true;
+}
+
+async function startHtml5Fallback(){
+  if(typeof Html5Qrcode==="undefined")throw new Error("Reservskannern kunde inte laddas");
+  $("#reader").innerHTML="";
+  scanner=new Html5Qrcode("reader");
+  await scanner.start(
+    {facingMode:{ideal:"environment"}},
+    {fps:12,qrbox:{width:300,height:160},aspectRatio:1.777778},
+    code=>handleScannedCode(code)
+  );
+  $("#appStatus").textContent="Kameran är igång med reservläsaren. Håll streckkoden stilla.";
+  return true;
+}
+
 async function startCamera(){
-  if(scanner || cameraStream)return;
+  if(scanner || cameraStream || zxingControls)return;
   $("#appStatus").textContent="Startar kameran…";
 
   if(!window.isSecureContext){
@@ -475,79 +589,39 @@ async function startCamera(){
     return;
   }
   if(!navigator.mediaDevices?.getUserMedia){
-    $("#appStatus").textContent="Den här webbläsaren ger inte Sundkollen åtkomst till kameran. Öppna sidan direkt i Chrome eller Samsung Internet.";
+    $("#appStatus").textContent="Den här webbläsaren saknar stöd för direkt kameraåtkomst. Använd bildval eller skriv streckkoden.";
     return;
   }
 
-  // Android/Chrome: använd webbläsarens inbyggda BarcodeDetector först.
-  // Det undviker ett känt problem med html5-qrcode 2.3.8 på vissa Samsung-enheter.
-  if("BarcodeDetector" in window){
-    try{
-      const supported=await BarcodeDetector.getSupportedFormats();
-      const wanted=["ean_13","ean_8","upc_a","upc_e","code_128","qr_code"].filter(x=>supported.includes(x));
-      const detector=wanted.length ? new BarcodeDetector({formats:wanted}) : new BarcodeDetector();
-
-      cameraStream=await navigator.mediaDevices.getUserMedia({
-        video:{
-          facingMode:{ideal:"environment"},
-          width:{ideal:1280},
-          height:{ideal:720}
-        },
-        audio:false
-      });
-
-      $("#reader").innerHTML='<video id="barcodeVideo" autoplay playsinline muted style="width:100%;max-height:420px;object-fit:cover;border-radius:12px;background:#111"></video>';
-      const video=$("#barcodeVideo");
-      video.srcObject=cameraStream;
-      await video.play();
-      nativeScanning=true;
-      $("#appStatus").textContent="Kameran är igång. Rikta den mot streckkoden.";
-
-      const scanFrame=async()=>{
-        if(!nativeScanning || !cameraStream)return;
-        try{
-          if(video.readyState>=2){
-            const codes=await detector.detect(video);
-            if(codes?.length){
-              const code=String(codes[0].rawValue||"").trim();
-              if(code){
-                $("#barcode").value=code;
-                await stopCamera();
-                lookup(code);
-                return;
-              }
-            }
-          }
-        }catch(e){}
-        scanTimer=setTimeout(scanFrame,180);
-      };
-      scanFrame();
-      return;
-    }catch(e){
-      await stopCamera();
-      console.warn("Native BarcodeDetector misslyckades, provar reservmetoden.",e);
-    }
-  }
-
-  // Reserv för webbläsare utan BarcodeDetector.
+  let lastError=null;
   try{
-    if(typeof Html5Qrcode==="undefined")throw new Error("Html5Qrcode-biblioteket kunde inte laddas");
-    $("#reader").innerHTML="";
-    scanner=new Html5Qrcode("reader");
-    await scanner.start(
-      {facingMode:{ideal:"environment"}},
-      {fps:10,qrbox:{width:280,height:140}},
-      code=>{
-        $("#barcode").value=code;
-        stopCamera().then(()=>lookup(code));
-      }
-    );
-    $("#appStatus").textContent="Kameran är igång. Rikta den mot streckkoden.";
+    await startZXingCamera();
+    return;
   }catch(e){
-    try{scanner?.clear()}catch(_){}
-    scanner=null;
-    $("#appStatus").textContent=cameraErrorMessage(e);
+    lastError=e;
+    await stopCamera();
+    console.warn("ZXing-kameran misslyckades, provar nästa metod.",e);
   }
+
+  try{
+    await startNativeBarcodeDetector();
+    return;
+  }catch(e){
+    lastError=e;
+    await stopCamera();
+    console.warn("BarcodeDetector misslyckades, provar reservläsaren.",e);
+  }
+
+  try{
+    await startHtml5Fallback();
+    return;
+  }catch(e){
+    lastError=e;
+    await stopCamera();
+    console.warn("Alla livekamerametoder misslyckades.",e);
+  }
+
+  $("#appStatus").textContent=cameraErrorMessage(lastError);
 }
 
 $("#scan").onclick=startCamera;
