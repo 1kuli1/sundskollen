@@ -78,16 +78,8 @@ input{font-size:1rem}
 
 <section id="scanView" class="view hidden" aria-labelledby="scanTitle">
 <div class="card">
-<h2 id="scanTitle" class="view-title">Registrera vara</h2>
-<p><b>Hur har varan kommit till?</b></p>
-<div class="source-choice" role="group" aria-label="Varans typ">
-<button type="button" data-source="bought">🛒 Köpt</button>
-<button type="button" data-source="own">🌱 Egenproducerat</button>
-<button type="button" data-source="made">🍳 Hemlagat / förädlat</button>
-</div>
-<div id="traceFields" class="trace-fields hidden"></div>
-</div>
-<div class="card">
+<h2 id="scanTitle" class="view-title">Skanna eller sök vara</h2>
+<p><b>Du behöver inte fylla i några uppgifter först.</b> Skanna streckkoden, välj en bild eller skriv numret manuellt.</p>
 <h2>Streckkod och produktdata</h2>
 <div id="reader" aria-label="Kameravy för streckkodsskanning"></div>
 <p id="cameraHelp"><small>Rikta kameran mot streckkoden. Du kan alltid skriva numret manuellt.</small></p>
@@ -139,6 +131,18 @@ input{font-size:1rem}
 </div>
 <div id="appStatus" class="status" role="status" aria-live="polite">Redo att skanna eller söka.</div>
 <div id="result" aria-live="polite" aria-busy="false"></div>
+
+<div class="card">
+<h2>Valfri spårbarhet</h2>
+<p>Det här fyller du bara i om du vill spara egna uppgifter om varan. <b>Det påverkar inte kameran eller sökningen.</b></p>
+<p><b>Hur har varan kommit till?</b></p>
+<div class="source-choice" role="group" aria-label="Varans typ">
+<button type="button" data-source="bought">🛒 Köpt</button>
+<button type="button" data-source="own">🌱 Egenproducerat</button>
+<button type="button" data-source="made">🍳 Hemlagat / förädlat</button>
+</div>
+<div id="traceFields" class="trace-fields hidden"></div>
+</div>
 </section>
 
 <section id="historyView" class="view hidden" aria-labelledby="historyTitle">
@@ -203,6 +207,22 @@ const alerts={
 
 function esc(x){return String(x??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
 function additiveLabel(tag){return tag.replace(/^..:/,"").toUpperCase().replace("E","E ")}
+function svCountryText(text){
+  return String(text||"")
+    .replace(/United Kingdom/gi,"Storbritannien")
+    .replace(/United States/gi,"USA")
+    .replace(/Sweden/gi,"Sverige")
+    .replace(/China/gi,"Kina")
+    .replace(/Germany/gi,"Tyskland")
+    .replace(/France/gi,"Frankrike")
+    .replace(/Italy/gi,"Italien")
+    .replace(/Spain/gi,"Spanien")
+    .replace(/Poland/gi,"Polen")
+    .replace(/Denmark/gi,"Danmark")
+    .replace(/Norway/gi,"Norge")
+    .replace(/Netherlands/gi,"Nederländerna")
+    .replace(/Belgium/gi,"Belgien");
+}
 async function lookup(code){
   code=(code||"").trim(); if(!code){$("#appStatus").textContent="Skriv eller skanna en streckkod först."; $("#barcode").focus(); return;}
   $("#result").setAttribute("aria-busy","true"); $("#appStatus").textContent="Söker efter produkten…"; $("#result").innerHTML='<div class="card"><p>Söker…</p></div>';
@@ -225,14 +245,17 @@ async function lookup(code){
     if(alg.length) html+=`<div class="item"><b>Allergener registrerade:</b> ${alg.map(x=>esc(x.replace(/^..:/,""))).join(", ")}</div>`;
     html+=`</div><div class="card"><h2>🌍 Var kommer varan ifrån?</h2>`;
     const originText=p.origins||"";
-    const countries=(p.countries_tags||[]).map(x=>x.replace(/^..:/,"").replaceAll("-"," "));
+    const countries=(p.countries_tags||[]).map(x=>svCountryText(x.replace(/^..:/,"").replaceAll("-"," ")));
     const places=p.manufacturing_places||"";
     const emb=(p.emb_codes||"");
-    if(originText) html+=`<div class="item"><b>Angivet ursprung:</b> ${esc(originText)}<br><span class="badge yellow">Produktdata – kontrollera förpackningen</span></div>`;
-    else html+=`<div class="item"><b>Råvaruursprung:</b> Okänt<br><span class="badge gray">Kontrollera förpackningen</span></div>`;
-    if(places) html+=`<div class="item"><b>Tillverknings-/förpackningsplats:</b> ${esc(places)}<br><span class="badge yellow">Produktdata</span></div>`;
+    if(originText){
+      html+=`<div class="item"><b>Ursprungsuppgifter i databasen:</b> ${esc(svCountryText(originText))}<br><span class="badge yellow">Behöver kontrolleras på förpackningen</span><p><small>Om flera länder visas, till exempel Sverige och Kina, kan uppgifterna gälla olika råvaror, ingredienser eller olika registrerade uppgifter. Det betyder <b>inte automatiskt</b> att hela produkten är tillverkad i alla dessa länder.</small></p></div>`;
+    } else {
+      html+=`<div class="item"><b>Råvaruursprung:</b> Okänt<br><span class="badge gray">Kontrollera förpackningen</span></div>`;
+    }
+    if(places) html+=`<div class="item"><b>Tillverknings-/förpackningsplats:</b> ${esc(svCountryText(places))}<br><span class="badge yellow">Produktdata</span></div>`;
     if(emb) html+=`<div class="item"><b>Anläggnings-/kontrollkod:</b> ${esc(emb)}<br><span class="badge yellow">Kan ge ytterligare spårbarhet</span></div>`;
-    if(countries.length) html+=`<div class="item"><b>Länder registrerade för produkten:</b> ${esc(countries.join(", "))}<br><small>Detta är inte automatiskt samma sak som råvarans ursprungsland.</small></div>`;
+    if(countries.length) html+=`<div class="item"><b>Länder där produkten är registrerad/såld:</b> ${esc(countries.join(", "))}<br><small>Detta beskriver inte nödvändigtvis råvarornas ursprung eller var produkten tillverkades.</small></div>`;
     html+=`<div class="warn"><b>Viktigt om streckkoden:</b> GS1-prefixet identifierar inte produktens ursprungsland. Sundkollen använder därför aldrig de första streckkodssiffrorna som bevis för var varan tillverkats.</div>`;
     html+=`<div class="item"><b>Mer spårning</b><p>Om uppgifterna saknas kan du kontrollera förpackningens text, kontroll-/identifieringsmärke, QR-kod och parti-/batchnummer. En kommande version kan läsa dessa från ett foto.</p></div>`;
     html+=`</div><div class="card"><h2>Tillsatser</h2>`;
