@@ -237,15 +237,124 @@ async function lookup(code){
 }
 $("#lookup").onclick=()=>lookup($("#barcode").value);
 $("#barcode").addEventListener("keydown",e=>{if(e.key==="Enter")lookup(e.target.value)});
-$("#scan").onclick=async()=>{
-  if(scanner)return;
-  scanner=new Html5Qrcode("reader");
+let cameraStream=null;
+let scanTimer=null;
+let nativeScanning=false;
+
+function cameraErrorMessage(e){
+  const name=e?.name||"";
+  if(name==="NotAllowedError" || name==="PermissionDeniedError")
+    return "Kameran är blockerad. Tillåt kamera för Sundkollen i webbläsarens webbplatsinställningar och försök igen.";
+  if(name==="NotFoundError" || name==="DevicesNotFoundError")
+    return "Ingen kamera hittades på enheten.";
+  if(name==="NotReadableError" || name==="TrackStartError")
+    return "Kameran används av en annan app eller kunde inte öppnas. Stäng andra kameraappar och försök igen.";
+  if(name==="OverconstrainedError")
+    return "Bakre kameran kunde inte väljas automatiskt. Försök igen eller skriv streckkoden manuellt.";
+  return "Kameran kunde inte startas. Öppna gärna Sundkollen direkt i Chrome eller Samsung Internet, tillåt kamera och försök igen.";
+}
+
+async function stopCamera(){
+  nativeScanning=false;
+  if(scanTimer){clearTimeout(scanTimer);scanTimer=null;}
+  if(cameraStream){
+    cameraStream.getTracks().forEach(t=>t.stop());
+    cameraStream=null;
+  }
+  if(scanner){
+    try{await scanner.stop()}catch(e){}
+    try{scanner.clear()}catch(e){}
+    scanner=null;
+  }
+  $("#reader").innerHTML="";
+}
+
+async function startCamera(){
+  if(scanner || cameraStream)return;
+  $("#appStatus").textContent="Startar kameran…";
+
+  if(!window.isSecureContext){
+    $("#appStatus").textContent="Kameran kräver en säker HTTPS-adress.";
+    return;
+  }
+  if(!navigator.mediaDevices?.getUserMedia){
+    $("#appStatus").textContent="Den här webbläsaren ger inte Sundkollen åtkomst till kameran. Öppna sidan direkt i Chrome eller Samsung Internet.";
+    return;
+  }
+
+  // Android/Chrome: använd webbläsarens inbyggda BarcodeDetector först.
+  // Det undviker ett känt problem med html5-qrcode 2.3.8 på vissa Samsung-enheter.
+  if("BarcodeDetector" in window){
+    try{
+      const supported=await BarcodeDetector.getSupportedFormats();
+      const wanted=["ean_13","ean_8","upc_a","upc_e","code_128","qr_code"].filter(x=>supported.includes(x));
+      const detector=wanted.length ? new BarcodeDetector({formats:wanted}) : new BarcodeDetector();
+
+      cameraStream=await navigator.mediaDevices.getUserMedia({
+        video:{
+          facingMode:{ideal:"environment"},
+          width:{ideal:1280},
+          height:{ideal:720}
+        },
+        audio:false
+      });
+
+      $("#reader").innerHTML='<video id="barcodeVideo" autoplay playsinline muted style="width:100%;max-height:420px;object-fit:cover;border-radius:12px;background:#111"></video>';
+      const video=$("#barcodeVideo");
+      video.srcObject=cameraStream;
+      await video.play();
+      nativeScanning=true;
+      $("#appStatus").textContent="Kameran är igång. Rikta den mot streckkoden.";
+
+      const scanFrame=async()=>{
+        if(!nativeScanning || !cameraStream)return;
+        try{
+          if(video.readyState>=2){
+            const codes=await detector.detect(video);
+            if(codes?.length){
+              const code=String(codes[0].rawValue||"").trim();
+              if(code){
+                $("#barcode").value=code;
+                await stopCamera();
+                lookup(code);
+                return;
+              }
+            }
+          }
+        }catch(e){}
+        scanTimer=setTimeout(scanFrame,180);
+      };
+      scanFrame();
+      return;
+    }catch(e){
+      await stopCamera();
+      console.warn("Native BarcodeDetector misslyckades, provar reservmetoden.",e);
+    }
+  }
+
+  // Reserv för webbläsare utan BarcodeDetector.
   try{
-    await scanner.start({facingMode:"environment"},{fps:10,qrbox:{width:280,height:140}},
-      code=>{ $("#barcode").value=code; lookup(code); $("#stop").click(); });
-  }catch(e){alert("Kameran kunde inte startas. Ge webbplatsen kamerabehörighet eller skriv streckkoden manuellt."); scanner=null}
-};
-$("#stop").onclick=async()=>{if(scanner){try{await scanner.stop()}catch(e){} scanner.clear(); scanner=null}}
+    if(typeof Html5Qrcode==="undefined")throw new Error("Html5Qrcode-biblioteket kunde inte laddas");
+    $("#reader").innerHTML="";
+    scanner=new Html5Qrcode("reader");
+    await scanner.start(
+      {facingMode:{ideal:"environment"}},
+      {fps:10,qrbox:{width:280,height:140}},
+      code=>{
+        $("#barcode").value=code;
+        stopCamera().then(()=>lookup(code));
+      }
+    );
+    $("#appStatus").textContent="Kameran är igång. Rikta den mot streckkoden.";
+  }catch(e){
+    try{scanner?.clear()}catch(_){}
+    scanner=null;
+    $("#appStatus").textContent=cameraErrorMessage(e);
+  }
+}
+
+$("#scan").onclick=startCamera;
+$("#stop").onclick=stopCamera;
 
 
 let packageImageUrl=null;
@@ -371,7 +480,7 @@ function showView(id){
   if(id==="historyView"){renderHistory();renderTraceHistory();}
 }
 document.querySelectorAll(".bottomnav button").forEach(b=>b.onclick=()=>showView(b.dataset.view));
-$("#homeScan").onclick=()=>{showView("scanView");setTimeout(()=>$("#scan").click(),100)};
+$("#homeScan").onclick=()=>{showView("scanView");startCamera()};
 $("#homeCode").onclick=()=>{showView("scanView");setTimeout(()=>$("#barcode").focus(),100)};
 
 function getHistory(){try{return JSON.parse(localStorage.getItem("sundkollen-history")||"[]")}catch(e){return[]}}
