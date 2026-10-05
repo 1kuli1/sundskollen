@@ -92,6 +92,9 @@ input{font-size:1rem}
 <div id="reader" aria-label="Kameravy för streckkodsskanning"></div>
 <p id="cameraHelp"><small>Rikta kameran mot streckkoden. Du kan alltid skriva numret manuellt.</small></p>
 <div class="row" role="group" aria-label="Kamerakontroller"><button id="scan" type="button">Starta kamera</button><button class="secondary" id="stop" type="button">Stoppa kamera</button></div>
+<label for="barcodeImage" style="display:block;margin-top:12px"><b>Alternativ: välj en bild av streckkoden</b></label>
+<input id="barcodeImage" type="file" accept="image/*" aria-describedby="barcodeImageHelp">
+<div id="barcodeImageHelp"><small>Fungerar även om webbläsaren inte ger direkt åtkomst till kameran.</small></div>
 <hr>
 <label for="barcode"><b>Streckkodsnummer</b></label>
 <input id="barcode" inputmode="numeric" autocomplete="off" aria-describedby="barcodeHelp" placeholder="T.ex. 7310865004703">
@@ -103,8 +106,11 @@ input{font-size:1rem}
 <h2>📷 Läs förpackningen</h2>
 <p>Om produktdatabasen saknar uppgifter kan du fotografera eller välja en bild av förpackningens baksida.</p>
 <label for="packagePhoto"><b>Foto av förpackning</b></label>
-<input id="packagePhoto" type="file" accept="image/*" capture="environment" aria-describedby="photoHelp">
-<div id="photoHelp"><small>Försök få med ursprungsmärkning, ingredienslista, kontrollmärke och batch/lot. Bilden stannar i denna webbläsarsession och laddas inte upp av Sundkollen v0.7.</small></div>
+<input id="packagePhoto" type="file" accept="image/*" aria-describedby="photoHelp">
+<div id="photoHelp"><small>Välj en befintlig bild från enheten. Försök få med ursprungsmärkning, ingredienslista, kontrollmärke och batch/lot.</small></div>
+<label for="packageCameraPhoto" style="display:block;margin-top:12px"><b>Ta ett nytt foto</b></label>
+<input id="packageCameraPhoto" type="file" accept="image/*" capture="environment" aria-describedby="cameraPhotoHelp">
+<div id="cameraPhotoHelp"><small>Om kameran inte öppnas här, använd filvalet ovan och välj en redan tagen bild.</small></div>
 <img id="photoPreview" class="photo-preview hidden" alt="Förhandsvisning av vald förpackningsbild">
 <div id="ocrPanel" class="hidden">
 <h3>Automatisk textläsning</h3>
@@ -356,6 +362,29 @@ async function startCamera(){
 $("#scan").onclick=startCamera;
 $("#stop").onclick=stopCamera;
 
+$("#barcodeImage").addEventListener("change",async e=>{
+  const file=e.target.files?.[0];
+  if(!file)return;
+  $("#appStatus").textContent="Läser streckkoden från bilden…";
+  try{
+    await stopCamera();
+    if(typeof Html5Qrcode==="undefined")throw new Error("Skanningsbiblioteket kunde inte laddas");
+    $("#reader").innerHTML="";
+    const imageScanner=new Html5Qrcode("reader");
+    const code=await imageScanner.scanFile(file,true);
+    try{imageScanner.clear()}catch(_){}
+    $("#reader").innerHTML="";
+    $("#barcode").value=code;
+    $("#appStatus").textContent="Streckkoden lästes från bilden.";
+    lookup(code);
+  }catch(err){
+    $("#reader").innerHTML="";
+    $("#appStatus").textContent="Kunde inte läsa någon streckkod från bilden. Prova en skarpare bild eller skriv numret manuellt.";
+  }finally{
+    e.target.value="";
+  }
+});
+
 
 let packageImageUrl=null;
 
@@ -449,14 +478,16 @@ $("#useOcr").onclick=()=>{
  $("#originNote").focus();
 };
 
-$("#packagePhoto").addEventListener("change",e=>{
- const f=e.target.files?.[0]; if(!f)return;
+function usePackagePhotoFile(f){
+ if(!f)return;
  if(packageImageUrl) URL.revokeObjectURL(packageImageUrl);
  packageImageUrl=URL.createObjectURL(f);
  const img=$("#photoPreview"); img.src=packageImageUrl; img.classList.remove("hidden");
  $("#ocrPanel").classList.remove("hidden"); $("#photoFields").classList.remove("hidden");
  $("#appStatus").textContent="Förpackningsbild vald. Kontrollera och skriv av relevanta uppgifter.";
-});
+}
+$("#packagePhoto").addEventListener("change",e=>usePackagePhotoFile(e.target.files?.[0]));
+$("#packageCameraPhoto").addEventListener("change",e=>usePackagePhotoFile(e.target.files?.[0]));
 $("#savePackageNotes").onclick=()=>{
  const code=$("#barcode").value.trim()||"utan-streckkod";
  const rec={
